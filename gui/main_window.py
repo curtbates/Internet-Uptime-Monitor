@@ -404,7 +404,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260509b\n\n"
+            "Version 20260509c\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

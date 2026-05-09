@@ -104,7 +104,7 @@ def get_latest_ip():
     return dict(row) if row else None
 
 
-def purge_old_records(max_age_days=370):
+def purge_old_records(max_age_days=10):
     import time
     cutoff = time.time() - max_age_days * 86400
     with _connect() as conn:

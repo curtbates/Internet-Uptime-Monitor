@@ -255,7 +255,7 @@ Indexed on `timestamp`.
 #### Data retention
 
 Both tables are pruned automatically. On startup, and then once every 24 hours,
-`purge_old_records()` deletes all rows whose `timestamp` is older than 370 days.
+`purge_old_records()` deletes all rows whose `timestamp` is older than 10 days.
 The database file itself is never deleted by the app.
 
 ### Configuration management (`config_manager.py`)

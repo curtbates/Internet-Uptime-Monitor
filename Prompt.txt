@@ -56,7 +56,7 @@ Table ip_log:
     isp_name   TEXT
     org        TEXT                         -- raw "AS12345 ISP Name" string
 
-Index timestamp on both tables. Purge records older than 370 days; run purge once
+Index timestamp on both tables. Purge records older than 10 days; run purge once
 at startup and re-schedule every 24 hours.
 
 ---
