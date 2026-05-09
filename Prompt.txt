@@ -1,9 +1,263 @@
-I want to create an Internet Monitoring System.  The goal of this to monitor my ISP.  To do this I want to check DNS looks up some domain names on an interval.  I want to check three different DNS providers, and ask them two domain names each.  The DNS providers and domain names should be stored in a josn config file.  Also the json config file should store the polling interval.
-Also, I have two ISPs (a primary and backup).  Only one ISP is active at a time.  If the primary fails, the backup is brought online.  So I also want to track public IP changes for my LAN.
-All of this data will need to be logged and index for later retieval and use in a graph in the GUI.
-All the code should be in python.
-The GUI should have a setup mune for defining the DNS providers, Domain manes to be looked up, and the polling interval.
-In the graph, the user should be be able to select to view the graph by DNS provider (an average of the doman lookup per interval), the domains (an average of the ISPs by interval), or a summary score (an calculated score of all items).
-The GUI should show the public IP and try to determine the ISP name and show it also.
-The app will only poll while open.
-This app should be able to run on Windows or Linux.
+Create an Internet Uptime Monitor application in Python. The goal is to monitor an ISP by periodically querying DNS servers and tracking public IP changes. All code must run on both Windows and Linux.
+
+---
+
+PROJECT STRUCTURE
+
+    main.py                  — entry point
+    config_manager.py        — load/save config.json
+    database.py              — SQLite helpers
+    dns_checker.py           — DNS query logic
+    ip_tracker.py            — public IP / ISP lookup
+    gui/__init__.py          — empty
+    gui/main_window.py       — main window, monitoring loop, tray
+    gui/graph_panel.py       — matplotlib graph widget
+    gui/setup_dialog.py      — modal setup dialog
+
+---
+
+DEPENDENCIES
+
+    dnspython      — DNS queries
+    requests       — IP lookup HTTP calls
+    matplotlib     — embedded graph
+    pystray        — system tray (optional, graceful degradation if missing)
+    Pillow         — tray icon image (optional, same as pystray)
+
+---
+
+CONFIG (config.json, stored next to the scripts)
+
+Defaults if file is missing or corrupt:
+    polling_interval_seconds: 60
+    dns_providers: [
+        {"name": "Google",     "server": "8.8.8.8"},
+        {"name": "Cloudflare", "server": "1.1.1.1"},
+        {"name": "OpenDNS",    "server": "208.67.222.222"}
+    ]
+    domains: ["google.com", "amazon.com"]
+
+---
+
+DATABASE (uptime_monitor.db, stored next to the scripts, SQLite)
+
+Table dns_results:
+    id               INTEGER PRIMARY KEY AUTOINCREMENT
+    timestamp        REAL NOT NULL          -- Unix epoch float
+    dns_provider     TEXT NOT NULL
+    domain           TEXT NOT NULL
+    response_time_ms REAL                   -- NULL on failure
+    success          INTEGER NOT NULL       -- 1 or 0
+
+Table ip_log:
+    id         INTEGER PRIMARY KEY AUTOINCREMENT
+    timestamp  REAL NOT NULL
+    public_ip  TEXT NOT NULL
+    isp_name   TEXT
+    org        TEXT                         -- raw "AS12345 ISP Name" string
+
+Index timestamp on both tables. Purge records older than 370 days; run purge once
+at startup and re-schedule every 24 hours.
+
+---
+
+DNS CHECKER (dns_checker.py)
+
+Function: check_dns(server_ip, domain, timeout=5.0) -> (bool, float | None)
+
+Use dnspython with configure=False (ignore system resolver). Set both lifetime
+and timeout to the timeout value to disable implicit retries. Query an A record.
+Measure elapsed time with time.perf_counter(). Return (True, elapsed_ms) on
+success or (False, None) on any exception.
+
+---
+
+IP TRACKER (ip_tracker.py)
+
+Function: get_public_ip_info(timeout=10) -> dict | None
+Returns {"ip": str, "isp": str, "org": str} or None if all services fail.
+
+Try these services in order, falling through on any error:
+  1. https://ipinfo.io/json     — ip field = "ip", org field = "org"
+  2. https://ipapi.co/json/     — ip field = "ip", org field = "org" or "isp"
+
+Strip the leading ASN token (e.g. "AS7922 Comcast...") from the org field so
+the displayed ISP name is human-readable. Store the raw org string separately.
+
+---
+
+MAIN WINDOW (gui/main_window.py)
+
+Window title: "Internet Uptime Monitor - by Curt Bates"
+Initial size: 1050x720, minimum: 800x580
+
+Layout (top to bottom, using pack):
+  1. Menu bar
+  2. Status bar (sunken frame)
+  3. Content area (graph panel above, event log below) — fills remaining space
+  4. Bottom bar
+
+MENU BAR
+  File > Export to Log File…   — saves a formatted text report of all records
+  File > Exit                   — full shutdown (not tray)
+  Setup > Configure…            — opens the Setup dialog
+  Help > About                  — custom Toplevel dialog, centered on main window,
+                                   not resizable, modal; shows app name, author,
+                                   version (20260509b), description text, OK button
+
+STATUS BAR
+  Left to right, separated by vertical separators:
+    "IP: <address>"
+    "ISP: <name>"
+    "● Monitoring" (green, #27ae60) or "● Stopped" (red, #c0392b)
+    "Last check: HH:MM:SS" (or "Last check: never")
+  Right-aligned:
+    "Next: HH:MM:SS" (shown while monitoring is active)
+
+Pre-populate IP/ISP on startup from the most recent ip_log record (so the user
+sees the last-known IP immediately without waiting for the first poll).
+
+CONTENT AREA
+  Top portion: GraphPanel widget (fills remaining space, expandable)
+  Bottom portion: LabelFrame "Event Log" containing a read-only Text widget,
+    6 rows tall, Courier New 9pt, word-wrap, with a vertical scrollbar.
+    Auto-scroll to the newest entry after each insert.
+    Named colour tags:
+      "ok"   → #27ae60 (green)  — all DNS lookups succeeded
+      "fail" → #c0392b (red)    — all DNS lookups failed
+      "info" → #2980b9 (blue)   — informational messages (start, stop, IP change)
+    No tag (default colour) when some but not all lookups failed.
+
+BOTTOM BAR
+  "▶  Start Monitoring" / "■  Stop Monitoring" toggle button (left)
+  "Interval: N s" label in gray (left, next to button)
+
+MONITORING LOOP
+  - Use root.after() to schedule polls; run actual DNS + IP work in a daemon thread.
+  - Use a queue.Queue to pass results from the worker thread back to the main thread.
+  - Drain the queue every 200 ms with root.after(200, _queue_check).
+  - On each completed poll cycle:
+      • Write all DNS results to the database.
+      • If the public IP has changed (or is newly detected), write to ip_log and
+        log an "info" event with the new IP and ISP.
+      • Compute the summary score (see Score Formula below) and store as _last_score.
+      • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
+        with ok/fail/no-tag colouring as described above.
+      • Update "Last check" and "Next" labels in the status bar.
+      • Refresh the graph panel.
+      • Update the tray icon.
+      • Schedule the next poll using the configured interval.
+  - Start monitoring automatically when the application launches.
+
+SCORE FORMULA (used both in the live poll handler and the graph panel)
+  success_rate = successful_lookups / total_lookups   (0.0–1.0)
+  rt_score     = clamp(1.0 - (avg_response_time_ms - 20) / 480, 0.0, 1.0)
+                 (20 ms → 1.0,  500 ms → 0.0)
+  score        = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
+
+EXPORT LOG (File > Export to Log File…)
+  Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
+  Write a header, then an IP/ISP log section and a DNS results section, each with
+  a column header line and a separator. Format timestamps as "YYYY-MM-DD HH:MM:SS".
+
+---
+
+GRAPH PANEL (gui/graph_panel.py)
+
+Embed a matplotlib Figure (9×4 inches, 100 dpi) with a NavigationToolbar2Tk below it.
+Use the TkAgg backend. Use tight_layout() and autofmt_xdate(rotation=30) after each draw.
+
+CONTROLS ROW (above the graph):
+  "View:" label + radio buttons: By Provider | By Domain | Summary Score
+  Vertical separator
+  "Range:" label + readonly Combobox: Last 1h | Last 6h | Last 24h | Last 7d
+  "Refresh" button
+  Vertical separator
+  "ISP:" label + readonly Combobox (populated from distinct ISP names in ip_log,
+    plus "All ISPs" as the first option); filters results to only records that
+    occurred while the selected ISP was active (determined by walking ip_log
+    transitions backward)
+
+TIME RANGES AND BUCKET SIZES:
+  Last 1h  →  60 s buckets  (up to 60 data points)
+  Last 6h  → 300 s buckets  (up to 72 data points)
+  Last 24h → 900 s buckets  (up to 96 data points)
+  Last 7d  → 3600 s buckets (up to 168 data points)
+
+Bucket a timestamp: int(timestamp / bucket_s) * bucket_s  (floor to bucket boundary)
+
+BY PROVIDER VIEW
+  One line per DNS provider. For each time bucket, average the response times of
+  all successful queries for that provider. Plot with marker="o", markersize=3.
+  Title: "DNS Response Time by Provider"
+  Y-axis: "Avg Response Time (ms)"
+
+BY DOMAIN VIEW
+  Same as By Provider but keyed on domain name.
+  Title: "DNS Response Time by Domain"
+  Y-axis: "Avg Response Time (ms)"
+
+SUMMARY SCORE VIEW
+  For each time bucket combine all providers and domains:
+    - Track success count and total count (from all records including failures)
+    - Track response times (from successful records only)
+    - Compute score using the Score Formula above
+  Plot a single steelblue line with shaded fill_between (alpha=0.25).
+  Add dashed reference lines: orange at 80 ("Good (80)"), red at 50 ("Poor (50)").
+  Title: "Summary Score  (70 % success rate + 30 % response time)"
+  Y-axis: "Score (0 – 100)", ylim (0, 105) for visual headroom above 100.
+
+Refresh the graph after every completed poll and whenever the user changes the
+view, time range, or ISP filter. Show a "No data available" placeholder when
+there are no results for the selected range.
+
+---
+
+SETUP DIALOG (gui/setup_dialog.py)
+
+Modal Toplevel, 520×460, not resizable. Three-tab Notebook:
+
+Tab 1 — DNS Providers
+  Listbox showing "Name  (server_ip)" for each provider, with vertical scrollbar.
+  Clicking a row copies it into the Name / Server IP entry fields below.
+  Buttons: Add (appends new entry), Update (overwrites selected entry), Remove.
+
+Tab 2 — Domains
+  Listbox of domain names. Entry field with Add (on button click or Enter key)
+  and Remove buttons. Normalise domains to lowercase; silently ignore duplicates.
+
+Tab 3 — Settings
+  Spinbox for polling interval (10–3600 seconds).
+
+Save button validates: interval in range, at least one provider, at least one domain.
+Cancel discards all changes. self.result is None on cancel, updated config dict on save.
+
+---
+
+SYSTEM TRAY (optional, requires pystray + Pillow)
+
+If pystray/Pillow are not installed, the app still runs; closing just quits instead
+of minimising to tray.
+
+Minimising the window (Unmap event) or clicking the window's X button hides the
+window (root.withdraw()) and creates a tray icon. A 150 ms delay before hiding
+prevents a visual glitch on some platforms.
+
+Tray icon: 64×64 RGBA filled circle with white outline (3 px).
+  Blue  (#2980b9) — not monitoring
+  Green (#27ae60) — monitoring, score > 80 or score not yet available
+  Yellow (#f39c12) — monitoring, score 50–80
+  Red   (#c0392b) — monitoring, score < 50
+
+Tray tooltip: "Internet Uptime Monitor  [Monitoring/Stopped]  Last check: HH:MM:SS"
+
+Tray menu:
+  Show          (default action, also triggered by double-click)
+  ─────
+  Start/Stop Monitoring   (label reflects current state dynamically)
+  ─────
+  Exit
+
+Restoring from tray: stop the pystray icon, call root.deiconify() / lift() /
+focus_force(). All pystray callbacks must marshal to the main thread via
+root.after(0, ...) because pystray runs on its own thread.

@@ -68,6 +68,8 @@ class MainWindow:
             self._last_ip = latest["public_ip"]
             self._set_ip(latest["public_ip"], latest.get("isp_name") or "Unknown")
 
+        self._start()
+
     # ------------------------------------------------------------------ UI build
 
     def _build_ui(self):
@@ -297,7 +299,7 @@ class MainWindow:
             rt_score = max(0.0, min(1.0, 1.0 - (avg_rt - 20) / 480))
         else:
             rt_score = 0.0
-        self._last_score = (success_rate * 0.7 + rt_score * 0.3) * 100
+        self._last_score = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
 
         # Summarise the poll results in the event log with colour coding.
         ok_count = sum(1 for r in dns_results if r["success"])
@@ -402,7 +404,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260509a\n\n"
+            "Version 20260509b\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

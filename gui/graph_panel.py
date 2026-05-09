@@ -272,7 +272,7 @@ class GraphPanel:
                 rt_score = 0.0
 
             # Weighted combination: success rate matters more than raw speed.
-            score = (success_rate * 0.7 + rt_score * 0.3) * 100
+            score = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
             xs.append(datetime.fromtimestamp(t))
             scores.append(score)
 
