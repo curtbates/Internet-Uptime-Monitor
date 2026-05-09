@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor")
+        self.root.title("Internet Uptime Monitor - by Curt Bates")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -394,16 +394,29 @@ class MainWindow:
             self._graph.refresh()      # re-draw in case display options changed
 
     def _show_about(self):
-        tk.messagebox.showinfo(
-            "About",
-            "Internet Uptime Monitor\n\n"
+        dlg = tk.Toplevel(self.root)
+        dlg.title("About")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        msg = (
+            "Internet Uptime Monitor\n"
+            "by Curt Bates\n"
+            "Version 20260509a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
             "Minimizing or closing sends the app to the system tray.\n"
-            "Right-click the tray icon to restore or exit.",
-            parent=self.root,
+            "Right-click the tray icon to restore or exit."
         )
+        tk.Label(dlg, text=msg, justify="left", padx=20, pady=16).pack()
+        tk.Button(dlg, text="OK", width=10, command=dlg.destroy).pack(pady=(0, 14))
+
+        dlg.update_idletasks()
+        w, h = dlg.winfo_reqwidth(), dlg.winfo_reqheight()
+        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
 
     # ------------------------------------------------------------------ tray
 
