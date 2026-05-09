@@ -1,0 +1,9 @@
+I want to create an Internet Monitoring System.  The goal of this to monitor my ISP.  To do this I want to check DNS looks up some domain names on an interval.  I want to check three different DNS providers, and ask them two domain names each.  The DNS providers and domain names should be stored in a josn config file.  Also the json config file should store the polling interval.
+Also, I have two ISPs (a primary and backup).  Only one ISP is active at a time.  If the primary fails, the backup is brought online.  So I also want to track public IP changes for my LAN.
+All of this data will need to be logged and index for later retieval and use in a graph in the GUI.
+All the code should be in python.
+The GUI should have a setup mune for defining the DNS providers, Domain manes to be looked up, and the polling interval.
+In the graph, the user should be be able to select to view the graph by DNS provider (an average of the doman lookup per interval), the domains (an average of the ISPs by interval), or a summary score (an calculated score of all items).
+The GUI should show the public IP and try to determine the ISP name and show it also.
+The app will only poll while open.
+This app should be able to run on Windows or Linux.

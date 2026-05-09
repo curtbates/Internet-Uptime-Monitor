@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import pystray; from PIL import Image; print\\('pystray OK'\\); print\\('Pillow OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('gui/main_window.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python main.py)"
+    ]
+  }
+}
