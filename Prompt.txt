@@ -33,9 +33,11 @@ Defaults if file is missing or corrupt:
     dns_providers: [
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},
-        {"name": "OpenDNS",    "server": "208.67.222.222"}
+        {"name": "OpenDNS",    "server": "208.67.222.222"},
+        {"name": "Quad9",      "server": "9.9.9.9"},
+        {"name": "Comodo",     "server": "8.26.56.26"}
     ]
-    domains: ["google.com", "amazon.com"]
+    domains: ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"]
 
 ---
 
@@ -103,7 +105,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260509b), description text, OK button
+                                   version (20260510a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:

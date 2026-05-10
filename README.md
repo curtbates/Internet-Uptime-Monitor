@@ -1,5 +1,7 @@
 # Internet Uptime Monitor
 
+**Version 20260510a**
+
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
 graphing historical data over time.
@@ -142,9 +144,11 @@ Internet Uptime Monitor/
   "dns_providers": [
     {"name": "Google",     "server": "8.8.8.8"},
     {"name": "Cloudflare", "server": "1.1.1.1"},
-    {"name": "OpenDNS",    "server": "208.67.222.222"}
+    {"name": "OpenDNS",    "server": "208.67.222.222"},
+    {"name": "Quad9",      "server": "9.9.9.9"},
+    {"name": "Comodo",     "server": "8.26.56.26"}
   ],
-  "domains": ["google.com", "example.com"]
+  "domains": ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"]
 }
 ```
 
@@ -160,7 +164,7 @@ You can edit `config.json` directly with a text editor, or use **Setup → Confi
 in the app. Changes made in the dialog take effect immediately without restarting.
 
 **Per-cycle query count:** `len(dns_providers) × len(domains)`. With the default
-3 providers and 2 domains that is 6 queries per poll.
+5 providers and 5 domains that is 25 queries per poll.
 
 ---
 

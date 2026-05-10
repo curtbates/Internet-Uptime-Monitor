@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 # Sensible out-of-the-box settings used when config.json is missing or corrupt.
-# Three well-known public DNS resolvers and two stable domains give a reasonable
+# Five well-known public DNS resolvers and two stable domains give a reasonable
 # baseline without requiring any initial setup from the user.
 DEFAULT_CONFIG = {
     "polling_interval_seconds": 60,
@@ -10,8 +10,10 @@ DEFAULT_CONFIG = {
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},
         {"name": "OpenDNS",    "server": "208.67.222.222"},
+        {"name": "Quad9",      "server": "9.9.9.9"},
+        {"name": "Comodo",     "server": "8.26.56.26"},
     ],
-    "domains": ["google.com", "example.com"],
+    "domains": ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"],
 }
 
 # Store config.json next to this script so the whole project stays self-contained
