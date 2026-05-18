@@ -288,6 +288,15 @@ class MainWindow:
                 self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
                 self._last_ip = ip
             self._set_ip(ip, isp)
+        else:
+            # Log once when the lookup first fails, then reset _last_ip so the
+            # next successful poll always logs the restored IP — even if it
+            # matches the pre-outage address. Without the reset, a brief routing
+            # glitch that sets _last_ip back to the primary ISP's address causes
+            # the actual failback to go undetected.
+            if self._last_ip is not None:
+                self._log_event("Public IP check failed — connection may be down.", "fail")
+                self._last_ip = None
 
         # Compute summary score (mirrors GraphPanel._plot_summary logic).
         ok_count = sum(1 for r in dns_results if r["success"])
@@ -404,7 +413,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260510a\n\n"
+            "Version 20260518a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

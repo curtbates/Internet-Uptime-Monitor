@@ -16,17 +16,13 @@
     {
       "name": "Quad9",
       "server": "9.9.9.9"
-    },
-    {
-      "name": "Comodo",
-      "server": "8.26.56.26"
     }
   ],
   "domains": [
     "google.com",
     "amazon.com",
-    "cloudflare.com",
     "microsoft.com",
-    "github.com"
+    "github.com",
+    "cisco.com"
   ]
 }

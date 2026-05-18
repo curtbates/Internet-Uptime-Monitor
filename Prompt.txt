@@ -105,7 +105,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260510a), description text, OK button
+                                   version (20260518a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:

@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260510a**
+**Version 20260518a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and

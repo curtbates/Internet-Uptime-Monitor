@@ -180,3 +180,4 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 uptime_monitor.db
+uptime_log_20260518_160435.txt
