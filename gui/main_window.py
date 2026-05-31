@@ -297,6 +297,9 @@ class MainWindow:
                     verb = "changed to" if self._last_ip else "detected as"
                     self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
                     self._last_ip = ip
+                elif ipv6_changed:
+                    # IPv6 changed but IPv4 didn't — log current IPv4 for context.
+                    self._log_event(f"Public IP: {ip}  ({isp})", "info")
                 if ipv6_changed:
                     verb = "changed to" if self._last_ipv6 else "detected as"
                     self._log_event(f"Public IPv6 {verb} {ipv6}  ({isp})", "info")
@@ -451,7 +454,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260631a\n\n"
+            "Version 20260531b\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

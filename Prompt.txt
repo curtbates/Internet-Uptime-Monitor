@@ -149,7 +149,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260518a), description text, OK button
+                                   version (20260531b), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -196,6 +196,8 @@ MONITORING LOOP
             IPv4, IPv6, ISP.
           - If ip_changed: log "Public IP changed to / detected as X  (ISP)"
             with "info" tag; update _last_ip.
+          - If ipv6_changed and NOT ip_changed: log "Public IP: X  (ISP)"
+            with "info" tag (current IPv4 for context alongside the IPv6 event).
           - If ipv6_changed: log "Public IPv6 changed to / detected as X  (ISP)"
             with "info" tag; update _last_ipv6.
       • If ip_info is None and _last_ip is not None: log the failure once with

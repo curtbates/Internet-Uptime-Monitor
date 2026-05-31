@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260631a**
+**Version 20260531b**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -241,7 +241,8 @@ status bar retains its previous value.
 IPv4 and IPv6 are tracked **independently** — a new `ip_log` row is inserted
 whenever either address changes. This captures ISP failovers (IPv4 change) and
 IPv6 prefix rotations (IPv6-only change) as separate, timestamped events in the
-event log and database.
+event log and database. When only IPv6 changes, the current IPv4 address is also
+written to the event log for context so both addresses are always visible together.
 
 ### Storage (`database.py`)
 
