@@ -4,7 +4,8 @@ Create an Internet Uptime Monitor application in Python. The goal is to monitor 
 
 PROJECT STRUCTURE
 
-    main.py                  — entry point
+    main.py                  — entry point (terminal)
+    main.pyw                 — entry point (no console window; errors via messagebox)
     config_manager.py        — load/save config.json
     database.py              — SQLite helpers
     dns_checker.py           — DNS query logic
@@ -13,6 +14,10 @@ PROJECT STRUCTURE
     gui/main_window.py       — main window, monitoring loop, tray
     gui/graph_panel.py       — matplotlib graph widget
     gui/setup_dialog.py      — modal setup dialog
+
+main.pyw is identical to main.py in behaviour. On Windows, pythonw (invoked
+automatically for .pyw files) runs without a console window. If a required
+package is missing it shows a tkinter messagebox instead of a console traceback.
 
 ---
 
@@ -41,7 +46,15 @@ Defaults if file is missing or corrupt:
 
 ---
 
-DATABASE (uptime_monitor.db, stored next to the scripts, SQLite)
+DATABASE
+
+Store the database in a platform-specific application data directory so it is
+never inside a cloud-sync folder (Google Drive, OneDrive, etc.):
+    Windows   %APPDATA%\InternetUptimeMonitor\uptime_monitor.db
+    Linux     ~/.InternetUptimeMonitor/uptime_monitor.db
+
+Create the directory with parents=True, exist_ok=True on module import using
+pathlib and os.environ.get("APPDATA", Path.home()).
 
 Table dns_results:
     id               INTEGER PRIMARY KEY AUTOINCREMENT
@@ -52,14 +65,20 @@ Table dns_results:
     success          INTEGER NOT NULL       -- 1 or 0
 
 Table ip_log:
-    id         INTEGER PRIMARY KEY AUTOINCREMENT
-    timestamp  REAL NOT NULL
-    public_ip  TEXT NOT NULL
-    isp_name   TEXT
-    org        TEXT                         -- raw "AS12345 ISP Name" string
+    id          INTEGER PRIMARY KEY AUTOINCREMENT
+    timestamp   REAL NOT NULL
+    public_ip   TEXT NOT NULL              -- dotted-decimal IPv4
+    isp_name    TEXT
+    org         TEXT                       -- raw "AS12345 ISP Name" string
+    public_ipv6 TEXT                       -- IPv6 address; NULL when not available
 
 Index timestamp on both tables. Purge records older than 10 days; run purge once
 at startup and re-schedule every 24 hours.
+
+Schema migration: initialize_db() must handle databases created before
+public_ipv6 was added. After the CREATE TABLE IF NOT EXISTS block, check
+PRAGMA table_info(ip_log); if public_ipv6 is absent, run:
+    ALTER TABLE ip_log ADD COLUMN public_ipv6 TEXT
 
 ---
 
@@ -76,15 +95,40 @@ success or (False, None) on any exception.
 
 IP TRACKER (ip_tracker.py)
 
+IPv4 fetch
+----------
 Function: get_public_ip_info(timeout=10) -> dict | None
-Returns {"ip": str, "isp": str, "org": str} or None if all services fail.
+Returns {"ip": str, "ipv6": str | None, "isp": str, "org": str} or None if all
+services fail.
 
-Try these services in order, falling through on any error:
+On dual-stack hosts, requests may connect to ipinfo.io over IPv6, causing the
+service to echo back the IPv6 address as "ip" rather than the IPv4 address.
+Prevent this with a custom HTTPAdapter subclass (_ForceIPv4Adapter) that
+temporarily sets urllib3.util.connection.allowed_gai_family to return
+socket.AF_INET for the duration of every send() call, then restores the
+original. Mount this adapter on a module-level requests.Session (_ipv4_session)
+for both "https://" and "http://", and use _ipv4_session.get() for all IPv4
+service calls.
+
+Try these services in order via _ipv4_session, falling through on any error:
   1. https://ipinfo.io/json     — ip field = "ip", org field = "org"
   2. https://ipapi.co/json/     — ip field = "ip", org field = "org" or "isp"
 
 Strip the leading ASN token (e.g. "AS7922 Comcast...") from the org field so
 the displayed ISP name is human-readable. Store the raw org string separately.
+
+IPv6 fetch
+----------
+Function: _fetch_ipv6(timeout=5) -> str | None
+
+Use plain requests.get() (not _ipv4_session) to hit:
+    https://api6.ipify.org?format=json
+This endpoint has only AAAA DNS records, so the OS must use IPv6 to reach it.
+Return the "ip" field from the JSON response, or None on any exception
+(including connection failure, which simply means the host has no IPv6).
+
+Call _fetch_ipv6() inside get_public_ip_info() after a successful IPv4 response
+and include the result as "ipv6" in the returned dict.
 
 ---
 
@@ -117,7 +161,8 @@ STATUS BAR
     "Next: HH:MM:SS" (shown while monitoring is active)
 
 Pre-populate IP/ISP on startup from the most recent ip_log record (so the user
-sees the last-known IP immediately without waiting for the first poll).
+sees the last-known IP immediately without waiting for the first poll). Also
+seed _last_ipv6 from the same record's public_ipv6 field.
 
 CONTENT AREA
   Top portion: GraphPanel widget (fills remaining space, expandable)
@@ -127,7 +172,8 @@ CONTENT AREA
     Named colour tags:
       "ok"   → #27ae60 (green)  — all DNS lookups succeeded
       "fail" → #c0392b (red)    — all DNS lookups failed
-      "info" → #2980b9 (blue)   — informational messages (start, stop, IP change)
+      "info" → #2980b9 (blue)   — informational (start, stop, IPv4 change,
+                                   IPv6 change, config update)
     No tag (default colour) when some but not all lookups failed.
 
 BOTTOM BAR
@@ -138,10 +184,23 @@ MONITORING LOOP
   - Use root.after() to schedule polls; run actual DNS + IP work in a daemon thread.
   - Use a queue.Queue to pass results from the worker thread back to the main thread.
   - Drain the queue every 200 ms with root.after(200, _queue_check).
+  - Track _last_ip (IPv4) and _last_ipv6 separately in MainWindow.__init__.
   - On each completed poll cycle:
       • Write all DNS results to the database.
-      • If the public IP has changed (or is newly detected), write to ip_log and
-        log an "info" event with the new IP and ISP.
+      • If ip_info is not None:
+          - ip_changed   = ip != _last_ip
+          - ipv6_changed = ipv6 is not None and ipv6 != _last_ipv6
+            (treat a None IPv6 result as a transient fetch failure, not a change,
+             to avoid spurious "lost IPv6" events)
+          - If ip_changed OR ipv6_changed: insert one ip_log row with current
+            IPv4, IPv6, ISP.
+          - If ip_changed: log "Public IP changed to / detected as X  (ISP)"
+            with "info" tag; update _last_ip.
+          - If ipv6_changed: log "Public IPv6 changed to / detected as X  (ISP)"
+            with "info" tag; update _last_ipv6.
+      • If ip_info is None and _last_ip is not None: log the failure once with
+        "fail" tag; reset both _last_ip and _last_ipv6 to None so the next
+        successful poll re-logs both addresses even if unchanged.
       • Compute the summary score (see Score Formula below) and store as _last_score.
       • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
         with ok/fail/no-tag colouring as described above.
@@ -159,8 +218,17 @@ SCORE FORMULA (used both in the live poll handler and the graph panel)
 
 EXPORT LOG (File > Export to Log File…)
   Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
-  Write a header, then an IP/ISP log section and a DNS results section, each with
-  a column header line and a separator. Format timestamps as "YYYY-MM-DD HH:MM:SS".
+  Write a header (title + generated timestamp), then a single DNS RESULTS section.
+  For each DNS result row include: timestamp, provider, domain, response time,
+  success flag, and the IPv4 address, IPv6 address, and ISP name that were active
+  at that moment. Determine the active IP/ISP by walking the ip_log rows
+  (sorted ascending) and finding the last transition whose timestamp <= the DNS
+  row's timestamp. Format timestamps as "YYYY-MM-DD HH:MM:SS". Show "—" for
+  missing IPv6 or unknown fields.
+
+  Column order and widths:
+    Timestamp  22  Provider  10  Domain  22  RT(ms)  8 right  OK?  3
+    IPv4  17  IPv6  39  ISP  (no fixed width, last column)
 
 ---
 

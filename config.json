@@ -16,6 +16,10 @@
     {
       "name": "Quad9",
       "server": "9.9.9.9"
+    },
+    {
+      "name": "Spectrum",
+      "server": "71.10.216.1"
     }
   ],
   "domains": [

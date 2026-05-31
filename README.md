@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260518a**
+**Version 20260631a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -92,8 +92,9 @@ pythonw main.pyw
 automatically for `.pyw` files) launches the app without opening a console window.
 If a required package is missing, a messagebox is shown instead of a console error.
 
-On first launch `config.json` is read and `uptime_monitor.db` is created in the same
-directory. Both files persist between sessions.
+On first launch `config.json` is read and `uptime_monitor.db` is created in
+`%APPDATA%\InternetUptimeMonitor\` (Windows) or `~/.InternetUptimeMonitor/` (Linux/macOS).
+Both files persist between sessions.
 
 ---
 
@@ -124,7 +125,6 @@ Internet Uptime Monitor/
 ├── ip_tracker.py         Fetches public IP and ISP name from external APIs.
 │
 ├── config.json           User configuration (edited via Setup dialog or directly).
-├── uptime_monitor.db     SQLite database — created on first run, grows over time.
 ├── requirements.txt      pip dependency list.
 │
 └── gui/
@@ -132,6 +132,11 @@ Internet Uptime Monitor/
     ├── main_window.py    Main application window, polling engine, event log.
     ├── setup_dialog.py   Modal "Configure…" dialog (three tabs).
     └── graph_panel.py    matplotlib graph widget with view/range controls.
+
+The SQLite database is stored outside the project folder to avoid cloud-sync conflicts:
+
+  Windows   %APPDATA%\InternetUptimeMonitor\uptime_monitor.db
+  Linux     ~/.InternetUptimeMonitor/uptime_monitor.db
 ```
 
 ---
@@ -194,7 +199,7 @@ tkinter after()  →  _fire_poll()  →  Thread: _poll_worker()
 
 tkinter after(200ms)  →  _queue_check()  →  _handle()
                                                  │  insert_dns_result × N
-                                                 │  insert_ip_log (if IP changed)
+                                                 │  insert_ip_log (if IPv4 or IPv6 changed)
                                                  │  update status bar
                                                  │  graph_panel.refresh()
                                                  └──►  schedule next poll via after()
@@ -216,20 +221,34 @@ response returns `(True, response_time_ms)`.
 
 ### IP and ISP detection (`ip_tracker.py`)
 
-Tries `https://ipinfo.io/json` first, then `https://ipapi.co/json/` as a
-fallback. Both return a JSON body containing the public IP and an `org` field
-with the format `"AS12345 ISP Name"`. The ASN prefix is stripped so only the
-human-readable ISP name is displayed. If both services are unreachable the
-function returns `None` and the status bar retains its previous value.
+**IPv4** is fetched by trying `https://ipinfo.io/json` first, then
+`https://ipapi.co/json/` as a fallback. Requests to those services are forced
+over IPv4 via a custom `HTTPAdapter` (`_ForceIPv4Adapter`) that pins
+`urllib3`'s address-family preference to `AF_INET` for the duration of the
+call. This ensures the service always echoes back the machine's IPv4 address
+rather than its IPv6 address on dual-stack connections.
 
-The IP log is append-only and a new row is inserted **only when the IP
-changes**. This makes it easy to see exactly when your ISP switched you to a
-different address or when a failover to your backup ISP occurred.
+**IPv6** is fetched separately by hitting `https://api6.ipify.org?format=json`,
+an endpoint that has only AAAA DNS records and therefore only responds over
+IPv6. If the machine has no IPv6 connectivity the connection fails silently and
+`None` is returned for the IPv6 field.
+
+Both services return an `org` field in the format `"AS12345 ISP Name"`. The ASN
+prefix is stripped so only the human-readable ISP name is stored and displayed.
+If all services are unreachable `get_public_ip_info()` returns `None` and the
+status bar retains its previous value.
+
+IPv4 and IPv6 are tracked **independently** — a new `ip_log` row is inserted
+whenever either address changes. This captures ISP failovers (IPv4 change) and
+IPv6 prefix rotations (IPv6-only change) as separate, timestamped events in the
+event log and database.
 
 ### Storage (`database.py`)
 
-SQLite via Python's built-in `sqlite3`. The database file is created next to the
-script on first run and is never deleted by the app.
+SQLite via Python's built-in `sqlite3`. The database is stored in a platform-specific
+application data directory (`%APPDATA%\InternetUptimeMonitor\` on Windows) rather than
+next to the script, so it is not affected by cloud-sync tools (Google Drive, OneDrive,
+etc.) that sit in the project folder. The file is never deleted by the app.
 
 #### `dns_results` table
 
@@ -249,11 +268,13 @@ Indexed on `timestamp` for fast range queries.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INTEGER PK | Auto-increment. |
-| `timestamp` | REAL | Unix epoch when IP was first seen. |
+| `timestamp` | REAL | Unix epoch when this address state was first observed. |
 | `public_ip` | TEXT | Dotted-decimal IPv4 string. |
 | `isp_name` | TEXT | Human-readable ISP name. |
 | `org` | TEXT | Raw `org` field, e.g. `"AS7922 Comcast"`. |
+| `public_ipv6` | TEXT | IPv6 address string; NULL when the host has no IPv6. |
 
+A new row is written whenever **either** `public_ip` or `public_ipv6` changes.
 Indexed on `timestamp`.
 
 #### Data retention
@@ -292,7 +313,7 @@ The top-level window is assembled from four regions packed into the root window:
 ```
 
 Event log colours: green = all queries succeeded, red = all failed,
-blue = informational (IP change, config update, start/stop).
+blue = informational (IPv4 change, IPv6 change, config update, start/stop).
 
 #### `SetupDialog` (setup_dialog.py)
 
@@ -379,9 +400,11 @@ The tray right-click menu provides:
 | **Exit** | Stops polling and quits the process |
 
 **File → Export to Log File…** opens a save dialog (default filename
-`uptime_log_YYYYMMDD_HHMMSS.txt`) and writes all database records to a
-human-readable text file with two sections: an IP/ISP log and a full DNS
-results table. A confirmation entry is added to the Event Log on success.
+`uptime_log_YYYYMMDD_HHMMSS.txt`) and writes all DNS results to a
+human-readable text file. Each row includes the timestamp, provider, domain,
+response time, success flag, and the public IPv4 address, IPv6 address, and ISP
+that were active at that moment (looked up from the `ip_log` transition history).
+A confirmation entry is added to the Event Log on success.
 
 **File → Exit** also fully quits (bypasses the tray). If `pystray` is not
 installed the window falls back to normal minimize/close behaviour.
@@ -436,13 +459,15 @@ the most readable label format for the selected range.
 
 If you have a primary and a backup ISP configured with automatic failover, you
 will see the public IP change in the Event Log and `ip_log` table every time a
-switchover occurs. The status bar always shows the current public IP and ISP name.
+switchover occurs. The status bar always shows the current public IPv4 and ISP name.
+IPv4 and IPv6 are tracked independently — a rotation of either address generates
+its own timestamped event log entry and `ip_log` row.
 The `ip_log` table gives you a complete switchover history with timestamps, which
 you can query directly:
 
 ```sql
 SELECT datetime(timestamp, 'unixepoch', 'localtime') AS time,
-       public_ip, isp_name
+       public_ip, public_ipv6, isp_name
 FROM   ip_log
 ORDER  BY timestamp;
 ```
@@ -451,12 +476,16 @@ ORDER  BY timestamp;
 
 ## Querying the Database Directly
 
-The SQLite database at `uptime_monitor.db` can be opened with any SQLite browser
+The SQLite database can be opened with any SQLite browser
 (e.g. [DB Browser for SQLite](https://sqlitebrowser.org/)) or queried from the
 command line:
 
 ```bash
-sqlite3 uptime_monitor.db
+# Windows (PowerShell)
+sqlite3 "$env:APPDATA\InternetUptimeMonitor\uptime_monitor.db"
+
+# Linux / macOS
+sqlite3 ~/.InternetUptimeMonitor/uptime_monitor.db
 ```
 
 Useful queries:
@@ -471,9 +500,9 @@ FROM   dns_results
 WHERE  timestamp > unixepoch('now') - 86400
 GROUP  BY dns_provider;
 
--- All IP changes with human-readable timestamps
+-- All IP / IPv6 changes with human-readable timestamps
 SELECT datetime(timestamp, 'unixepoch', 'localtime') AS time,
-       public_ip, isp_name
+       public_ip, public_ipv6, isp_name
 FROM   ip_log
 ORDER  BY timestamp;
 
@@ -498,7 +527,18 @@ in a terminal.
 
 **Graph shows "No data available"**
 Click **▶ Start Monitoring** and wait for at least one poll to complete. Also
-check that the selected time range matches when data was collected.
+check that the selected time range matches when data was collected (the database
+keeps only the last 10 days).
+
+**History disappears after running for several days (cloud sync conflict)**
+If the project folder lives inside Google Drive, OneDrive, or a similar sync
+service, the sync tool may silently replace `uptime_monitor.db` with a stale
+cloud copy, wiping accumulated data. The app stores its database in
+`%APPDATA%\InternetUptimeMonitor\` (outside the project folder) specifically to
+avoid this. If you cloned or copied the project into a sync folder and are still
+seeing conflict copies (files named `uptime_monitor (1).db`, etc.), delete those
+files — they are harmless leftovers and the real database is no longer stored
+there.
 
 **All DNS queries fail**
 Check that the server IPs in your config are reachable — some corporate or

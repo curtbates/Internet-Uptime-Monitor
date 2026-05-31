@@ -1,8 +1,14 @@
 import sqlite3
 from pathlib import Path
+import os
 
-# Place the database next to the script so everything stays in one folder.
-DB_FILE = Path(__file__).parent / "uptime_monitor.db"
+# Store the database in %APPDATA% so it lives outside of any cloud-sync folder
+# (e.g. Google Drive, OneDrive). Syncing a SQLite file that is written to every
+# few seconds causes Google Drive to create conflict copies and can silently
+# replace the local database with an older cloud version, wiping accumulated data.
+_APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "InternetUptimeMonitor"
+_APP_DIR.mkdir(parents=True, exist_ok=True)
+DB_FILE = _APP_DIR / "uptime_monitor.db"
 
 
 def _connect():
@@ -34,14 +40,19 @@ def initialize_db():
             CREATE INDEX IF NOT EXISTS idx_dns_ts ON dns_results(timestamp);
 
             CREATE TABLE IF NOT EXISTS ip_log (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp  REAL NOT NULL,   -- when this IP was first observed
-                public_ip  TEXT NOT NULL,   -- dotted-decimal IPv4 string
-                isp_name   TEXT,            -- human-readable ISP name (may be NULL)
-                org        TEXT             -- raw "AS12345 ISP Name" from the API
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   REAL NOT NULL,   -- when this IP was first observed
+                public_ip   TEXT NOT NULL,   -- dotted-decimal IPv4 string
+                isp_name    TEXT,            -- human-readable ISP name (may be NULL)
+                org         TEXT,            -- raw "AS12345 ISP Name" from the API
+                public_ipv6 TEXT             -- IPv6 address, NULL when not available
             );
             CREATE INDEX IF NOT EXISTS idx_ip_ts ON ip_log(timestamp);
         """)
+        # Migrate databases created before the public_ipv6 column was added.
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(ip_log)")}
+        if "public_ipv6" not in existing_cols:
+            conn.execute("ALTER TABLE ip_log ADD COLUMN public_ipv6 TEXT")
 
 
 def insert_dns_result(timestamp, dns_provider, domain, response_time_ms, success):
@@ -55,11 +66,11 @@ def insert_dns_result(timestamp, dns_provider, domain, response_time_ms, success
         )
 
 
-def insert_ip_log(timestamp, public_ip, isp_name=None, org=None):
+def insert_ip_log(timestamp, public_ip, isp_name=None, org=None, public_ipv6=None):
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO ip_log (timestamp, public_ip, isp_name, org) VALUES (?, ?, ?, ?)",
-            (timestamp, public_ip, isp_name, org),
+            "INSERT INTO ip_log (timestamp, public_ip, isp_name, org, public_ipv6) VALUES (?, ?, ?, ?, ?)",
+            (timestamp, public_ip, isp_name, org, public_ipv6),
         )
 
 

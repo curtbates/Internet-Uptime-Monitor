@@ -45,7 +45,8 @@ class MainWindow:
         # tkinter widgets must only be touched from the thread that created them.
         self._queue: queue.Queue = queue.Queue()
 
-        self._last_ip: str | None = None    # tracks last seen IP to detect changes
+        self._last_ip:   str | None = None  # tracks last seen IPv4 to detect changes
+        self._last_ipv6: str | None = None  # tracks last seen IPv6 to detect changes
         self._last_score: float | None = None  # most recent summary score (0–100)
 
         # Tray state — both set together to prevent re-entrancy (see _on_unmap).
@@ -65,7 +66,8 @@ class MainWindow:
         # so the user isn't staring at dashes until the first poll finishes.
         latest = get_latest_ip()
         if latest:
-            self._last_ip = latest["public_ip"]
+            self._last_ip   = latest["public_ip"]
+            self._last_ipv6 = latest.get("public_ipv6")
             self._set_ip(latest["public_ip"], latest.get("isp_name") or "Unknown")
 
         self._start()
@@ -275,18 +277,31 @@ class MainWindow:
             insert_dns_result(r["timestamp"], r["provider"], r["domain"],
                               r["response_time_ms"], r["success"])
 
-        # Only log an IP record when the address actually changes. This keeps
-        # ip_log as a meaningful change-history rather than a flood of duplicates,
-        # making it easy to identify ISP failover events later.
+        # Log a new ip_log row whenever IPv4 or IPv6 changes. Both are tracked
+        # independently so an IPv6 rotation doesn't go unnoticed just because
+        # IPv4 stayed the same, and vice-versa.
         if ip_info:
-            ip  = ip_info["ip"]
-            isp = ip_info["isp"]
-            if ip != self._last_ip:
-                insert_ip_log(ts, ip, isp, ip_info.get("org"))
-                # Use different wording for the very first detection vs. a change.
-                verb = "changed to" if self._last_ip else "detected as"
-                self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
-                self._last_ip = ip
+            ip   = ip_info["ip"]
+            ipv6 = ip_info.get("ipv6")
+            isp  = ip_info["isp"]
+
+            ip_changed = ip != self._last_ip
+            # Only treat a None IPv6 result as a change if we previously had a
+            # value — a None means the fetch failed transiently, not that the
+            # address was lost, so we avoid spurious "lost IPv6" log entries.
+            ipv6_changed = ipv6 is not None and ipv6 != self._last_ipv6
+
+            if ip_changed or ipv6_changed:
+                insert_ip_log(ts, ip, isp, ip_info.get("org"), ipv6)
+                if ip_changed:
+                    verb = "changed to" if self._last_ip else "detected as"
+                    self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
+                    self._last_ip = ip
+                if ipv6_changed:
+                    verb = "changed to" if self._last_ipv6 else "detected as"
+                    self._log_event(f"Public IPv6 {verb} {ipv6}  ({isp})", "info")
+                    self._last_ipv6 = ipv6
+
             self._set_ip(ip, isp)
         else:
             # Log once when the lookup first fails, then reset _last_ip so the
@@ -296,7 +311,8 @@ class MainWindow:
             # the actual failback to go undetected.
             if self._last_ip is not None:
                 self._log_event("Public IP check failed — connection may be down.", "fail")
-                self._last_ip = None
+                self._last_ip   = None
+                self._last_ipv6 = None
 
         # Compute summary score (mirrors GraphPanel._plot_summary logic).
         ok_count = sum(1 for r in dns_results if r["success"])
@@ -349,34 +365,56 @@ class MainWindow:
             return
 
         try:
-            ip_rows  = get_ip_log()
+            ip_rows  = get_ip_log()     # sorted ascending by timestamp
             dns_rows = get_dns_results(0)   # 0 = all records
+
+            # Build a lookup that maps each DNS result to the IP/ISP that was
+            # active at that moment. ip_log is already sorted ascending, so we
+            # walk it once and for each DNS row find the last transition whose
+            # timestamp is <= the row's timestamp.
+            transitions = [
+                (
+                    r["timestamp"],
+                    r["public_ip"],
+                    r.get("public_ipv6") or "—",
+                    r.get("isp_name") or r.get("org") or "Unknown",
+                )
+                for r in ip_rows
+            ]
+
+            def active_ip_at(ts):
+                ipv4, ipv6, isp = "—", "—", "—"
+                for t, v4, v6, isp_name in transitions:
+                    if t <= ts:
+                        ipv4, ipv6, isp = v4, v6, isp_name
+                    else:
+                        break
+                return ipv4, ipv6, isp
 
             with open(path, "w", encoding="utf-8") as f:
                 f.write("Internet Uptime Monitor — Export\n")
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 72 + "\n\n")
 
-                f.write("IP / ISP LOG\n")
+                f.write("DNS RESULTS\n")
                 f.write("-" * 72 + "\n")
-                f.write(f"{'Timestamp':<22}  {'Public IP':<18}  {'ISP'}\n")
-                f.write(f"{'─'*22}  {'─'*18}  {'─'*28}\n")
-                for r in ip_rows:
-                    ts  = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                    isp = r.get("isp_name") or r.get("org") or "Unknown"
-                    f.write(f"{ts:<22}  {r['public_ip']:<18}  {isp}\n")
-                if not ip_rows:
-                    f.write("  (no records)\n")
-
-                f.write("\n\nDNS RESULTS\n")
-                f.write("-" * 72 + "\n")
-                f.write(f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  {'RT (ms)':>8}  {'OK?'}\n")
-                f.write(f"{'─'*22}  {'─'*10}  {'─'*22}  {'─'*8}  {'─'*3}\n")
+                f.write(
+                    f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  "
+                    f"{'RT (ms)':>8}  {'OK?':<3}  {'IPv4':<17}  {'IPv6':<39}  {'ISP'}\n"
+                )
+                f.write(
+                    f"{'─'*22}  {'─'*10}  {'─'*22}  "
+                    f"{'─'*8}  {'─'*3}  {'─'*17}  {'─'*39}  {'─'*28}\n"
+                )
                 for r in dns_rows:
-                    ts  = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                    rt  = f"{r['response_time_ms']:.1f}" if r["response_time_ms"] is not None else "—"
-                    ok  = "yes" if r["success"] else "no"
-                    f.write(f"{ts:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  {rt:>8}  {ok}\n")
+                    ts           = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    rt           = f"{r['response_time_ms']:.1f}" if r["response_time_ms"] is not None else "—"
+                    ok           = "yes" if r["success"] else "no"
+                    ipv4, ipv6, isp = active_ip_at(r["timestamp"])
+                    f.write(
+                        f"{ts:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
+                        f"{rt:>8}  {ok:<3}  {ipv4:<17}  {ipv6:<39}  {isp}\n"
+                    )
                 if not dns_rows:
                     f.write("  (no records)\n")
 
@@ -413,7 +451,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260518a\n\n"
+            "Version 20260631a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
