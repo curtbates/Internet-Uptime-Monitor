@@ -48,6 +48,12 @@ def initialize_db():
                 public_ipv6 TEXT             -- IPv6 address, NULL when not available
             );
             CREATE INDEX IF NOT EXISTS idx_ip_ts ON ip_log(timestamp);
+
+            CREATE TABLE IF NOT EXISTS ip_failures (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL   -- when the failure was first detected
+            );
+            CREATE INDEX IF NOT EXISTS idx_ipfail_ts ON ip_failures(timestamp);
         """)
         # Migrate databases created before the public_ipv6 column was added.
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(ip_log)")}
@@ -87,6 +93,20 @@ def get_dns_results(since_timestamp):
     return [dict(r) for r in rows]
 
 
+def insert_ip_failure(timestamp):
+    with _connect() as conn:
+        conn.execute("INSERT INTO ip_failures (timestamp) VALUES (?)", (timestamp,))
+
+
+def get_ip_failures(since_timestamp=0):
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM ip_failures WHERE timestamp >= ? ORDER BY timestamp",
+            (since_timestamp,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_ip_log(since_timestamp=0):
     # Default of 0 means "all records ever" when called without an argument.
     with _connect() as conn:
@@ -121,3 +141,4 @@ def purge_old_records(max_age_days=10):
     with _connect() as conn:
         conn.execute("DELETE FROM dns_results WHERE timestamp < ?", (cutoff,))
         conn.execute("DELETE FROM ip_log WHERE timestamp < ?", (cutoff,))
+        conn.execute("DELETE FROM ip_failures WHERE timestamp < ?", (cutoff,))

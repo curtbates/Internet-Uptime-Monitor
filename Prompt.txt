@@ -72,8 +72,16 @@ Table ip_log:
     org         TEXT                       -- raw "AS12345 ISP Name" string
     public_ipv6 TEXT                       -- IPv6 address; NULL when not available
 
-Index timestamp on both tables. Purge records older than 10 days; run purge once
-at startup and re-schedule every 24 hours.
+Table ip_failures:
+    id        INTEGER PRIMARY KEY AUTOINCREMENT
+    timestamp REAL NOT NULL               -- when the failure was first detected
+
+One ip_failures row is written each time a working IP check transitions to
+failure (i.e. the first poll that returns None after a successful poll).
+Back-to-back failures within the same outage do not add additional rows.
+
+Index timestamp on all three tables. Purge records older than 10 days across
+all three tables; run purge once at startup and re-schedule every 24 hours.
 
 Schema migration: initialize_db() must handle databases created before
 public_ipv6 was added. After the CREATE TABLE IF NOT EXISTS block, check
@@ -149,7 +157,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260531b), description text, OK button
+                                   version (20260603a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -201,8 +209,9 @@ MONITORING LOOP
           - If ipv6_changed: log "Public IPv6 changed to / detected as X  (ISP)"
             with "info" tag; update _last_ipv6.
       • If ip_info is None and _last_ip is not None: log the failure once with
-        "fail" tag; reset both _last_ip and _last_ipv6 to None so the next
-        successful poll re-logs both addresses even if unchanged.
+        "fail" tag; call insert_ip_failure(ts) to persist the event; reset both
+        _last_ip and _last_ipv6 to None so the next successful poll re-logs
+        both addresses even if unchanged.
       • Compute the summary score (see Score Formula below) and store as _last_score.
       • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
         with ok/fail/no-tag colouring as described above.
@@ -220,16 +229,26 @@ SCORE FORMULA (used both in the live poll handler and the graph panel)
 
 EXPORT LOG (File > Export to Log File…)
   Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
-  Write a header (title + generated timestamp), then a single DNS RESULTS section.
-  For each DNS result row include: timestamp, provider, domain, response time,
-  success flag, and the IPv4 address, IPv6 address, and ISP name that were active
-  at that moment. Determine the active IP/ISP by walking the ip_log rows
-  (sorted ascending) and finding the last transition whose timestamp <= the DNS
-  row's timestamp. Format timestamps as "YYYY-MM-DD HH:MM:SS". Show "—" for
-  missing IPv6 or unknown fields.
+  Write a header (title + generated timestamp), then three sections:
 
-  Column order and widths:
-    Timestamp  22  Provider  10  Domain  22  RT(ms)  8 right  OK?  3
+  Section 1 — DNS RESULTS
+    Every dns_results row. Columns: timestamp, provider, domain, response time,
+    success flag ("yes"/"no"), IPv4, IPv6, ISP. Determine the active IP/ISP by
+    walking the ip_log rows (sorted ascending) and finding the last transition
+    whose timestamp <= the DNS row's timestamp.
+
+  Section 2 — DNS FAILURES
+    The subset of dns_results rows where success = 0. Same columns as DNS RESULTS
+    except response time and OK? are omitted (both are always "—" / "no").
+
+  Section 3 — IP CHECK FAILURES
+    Every ip_failures row. Single column: Timestamp.
+
+  For all sections: format timestamps as "YYYY-MM-DD HH:MM:SS"; show "—" for
+  missing IPv6 or unknown fields; write "  (no records)" when a section is empty.
+
+  Column order and widths for DNS RESULTS / DNS FAILURES:
+    Timestamp  22  Provider  10  Domain  22  [RT(ms)  8 right  OK?  3 — RESULTS only]
     IPv4  17  IPv6  39  ISP  (no fixed width, last column)
 
 ---

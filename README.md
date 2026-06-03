@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260531b**
+**Version 20260603a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -200,6 +200,7 @@ tkinter after()  →  _fire_poll()  →  Thread: _poll_worker()
 tkinter after(200ms)  →  _queue_check()  →  _handle()
                                                  │  insert_dns_result × N
                                                  │  insert_ip_log (if IPv4 or IPv6 changed)
+                                                 │  insert_ip_failure (if IP check failed)
                                                  │  update status bar
                                                  │  graph_panel.refresh()
                                                  └──►  schedule next poll via after()
@@ -278,9 +279,22 @@ Indexed on `timestamp` for fast range queries.
 A new row is written whenever **either** `public_ip` or `public_ipv6` changes.
 Indexed on `timestamp`.
 
+#### `ip_failures` table
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Auto-increment. |
+| `timestamp` | REAL | Unix epoch when the failure was first detected. |
+
+One row is written each time a previously-working IP check transitions to failure
+(i.e. the first poll that returns `None` after a successful poll). Subsequent
+back-to-back failures within the same outage do not add rows. Recovery is recorded
+implicitly via the next `ip_log` row when the address is re-detected.
+Indexed on `timestamp`.
+
 #### Data retention
 
-Both tables are pruned automatically. On startup, and then once every 24 hours,
+All three tables are pruned automatically. On startup, and then once every 24 hours,
 `purge_old_records()` deletes all rows whose `timestamp` is older than 10 days.
 The database file itself is never deleted by the app.
 
@@ -401,10 +415,18 @@ The tray right-click menu provides:
 | **Exit** | Stops polling and quits the process |
 
 **File → Export to Log File…** opens a save dialog (default filename
-`uptime_log_YYYYMMDD_HHMMSS.txt`) and writes all DNS results to a
-human-readable text file. Each row includes the timestamp, provider, domain,
-response time, success flag, and the public IPv4 address, IPv6 address, and ISP
-that were active at that moment (looked up from the `ip_log` transition history).
+`uptime_log_YYYYMMDD_HHMMSS.txt`) and writes a human-readable text file with
+three sections:
+
+- **DNS RESULTS** — every DNS query with timestamp, provider, domain, response
+  time, success flag, and the IPv4, IPv6, and ISP active at that moment (resolved
+  from the `ip_log` transition history).
+- **DNS FAILURES** — the subset of DNS results where the query failed, with the
+  same IP/ISP context columns.
+- **IP CHECK FAILURES** — each moment the public IP lookup failed (transitions
+  from working to `None`), with the timestamp of when the failure was first
+  detected.
+
 A confirmation entry is added to the Event Log on success.
 
 **File → Exit** also fully quits (bypasses the tray). If `pystray` is not
@@ -514,6 +536,11 @@ FROM   dns_results
 WHERE  success = 1
 ORDER  BY response_time_ms DESC
 LIMIT  10;
+
+-- All IP check failure events (outage start times)
+SELECT datetime(timestamp, 'unixepoch', 'localtime') AS failure_detected
+FROM   ip_failures
+ORDER  BY timestamp;
 ```
 
 ---

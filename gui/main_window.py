@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from tkinter import filedialog, ttk
 
 from config_manager import load_config, save_config
-from database import initialize_db, purge_old_records, insert_dns_result, insert_ip_log, get_latest_ip, get_dns_results, get_ip_log
+from database import initialize_db, purge_old_records, insert_dns_result, insert_ip_log, insert_ip_failure, get_latest_ip, get_dns_results, get_ip_log, get_ip_failures
 from dns_checker import check_dns
 from ip_tracker import get_public_ip_info
 from gui.setup_dialog import SetupDialog
@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260603a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -314,6 +314,7 @@ class MainWindow:
             # the actual failback to go undetected.
             if self._last_ip is not None:
                 self._log_event("Public IP check failed — connection may be down.", "fail")
+                insert_ip_failure(ts)
                 self._last_ip   = None
                 self._last_ipv6 = None
 
@@ -368,8 +369,10 @@ class MainWindow:
             return
 
         try:
-            ip_rows  = get_ip_log()     # sorted ascending by timestamp
-            dns_rows = get_dns_results(0)   # 0 = all records
+            ip_rows      = get_ip_log()       # sorted ascending by timestamp
+            dns_rows     = get_dns_results(0) # 0 = all records
+            fail_rows    = get_ip_failures()  # IP check failure events
+            dns_failures = [r for r in dns_rows if not r["success"]]
 
             # Build a lookup that maps each DNS result to the IP/ISP that was
             # active at that moment. ip_log is already sorted ascending, so we
@@ -410,15 +413,45 @@ class MainWindow:
                     f"{'─'*8}  {'─'*3}  {'─'*17}  {'─'*39}  {'─'*28}\n"
                 )
                 for r in dns_rows:
-                    ts           = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    ts_str       = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
                     rt           = f"{r['response_time_ms']:.1f}" if r["response_time_ms"] is not None else "—"
                     ok           = "yes" if r["success"] else "no"
                     ipv4, ipv6, isp = active_ip_at(r["timestamp"])
                     f.write(
-                        f"{ts:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
+                        f"{ts_str:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
                         f"{rt:>8}  {ok:<3}  {ipv4:<17}  {ipv6:<39}  {isp}\n"
                     )
                 if not dns_rows:
+                    f.write("  (no records)\n")
+
+                f.write("\n\nDNS FAILURES\n")
+                f.write("-" * 72 + "\n")
+                f.write(
+                    f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  "
+                    f"{'IPv4':<17}  {'IPv6':<39}  {'ISP'}\n"
+                )
+                f.write(
+                    f"{'─'*22}  {'─'*10}  {'─'*22}  "
+                    f"{'─'*17}  {'─'*39}  {'─'*28}\n"
+                )
+                for r in dns_failures:
+                    ts_str          = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    ipv4, ipv6, isp = active_ip_at(r["timestamp"])
+                    f.write(
+                        f"{ts_str:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
+                        f"{ipv4:<17}  {ipv6:<39}  {isp}\n"
+                    )
+                if not dns_failures:
+                    f.write("  (no records)\n")
+
+                f.write("\n\nIP CHECK FAILURES\n")
+                f.write("-" * 72 + "\n")
+                f.write(f"{'Timestamp':<22}\n")
+                f.write(f"{'─'*22}\n")
+                for r in fail_rows:
+                    ts_str = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    f.write(f"{ts_str}\n")
+                if not fail_rows:
                     f.write("  (no records)\n")
 
             self._log_event(f"Exported log to {path}", "info")
@@ -454,7 +487,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260531b\n\n"
+            "Version 20260603a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
