@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260603a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260604a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -402,29 +402,7 @@ class MainWindow:
                 f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 72 + "\n\n")
 
-                f.write("DNS RESULTS\n")
-                f.write("-" * 72 + "\n")
-                f.write(
-                    f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  "
-                    f"{'RT (ms)':>8}  {'OK?':<3}  {'IPv4':<17}  {'IPv6':<39}  {'ISP'}\n"
-                )
-                f.write(
-                    f"{'─'*22}  {'─'*10}  {'─'*22}  "
-                    f"{'─'*8}  {'─'*3}  {'─'*17}  {'─'*39}  {'─'*28}\n"
-                )
-                for r in dns_rows:
-                    ts_str       = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-                    rt           = f"{r['response_time_ms']:.1f}" if r["response_time_ms"] is not None else "—"
-                    ok           = "yes" if r["success"] else "no"
-                    ipv4, ipv6, isp = active_ip_at(r["timestamp"])
-                    f.write(
-                        f"{ts_str:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
-                        f"{rt:>8}  {ok:<3}  {ipv4:<17}  {ipv6:<39}  {isp}\n"
-                    )
-                if not dns_rows:
-                    f.write("  (no records)\n")
-
-                f.write("\n\nDNS FAILURES\n")
+                f.write("DNS FAILURES\n")
                 f.write("-" * 72 + "\n")
                 f.write(
                     f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  "
@@ -452,6 +430,28 @@ class MainWindow:
                     ts_str = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
                     f.write(f"{ts_str}\n")
                 if not fail_rows:
+                    f.write("  (no records)\n")
+
+                f.write("\n\nDNS RESULTS\n")
+                f.write("-" * 72 + "\n")
+                f.write(
+                    f"{'Timestamp':<22}  {'Provider':<10}  {'Domain':<22}  "
+                    f"{'RT (ms)':>8}  {'OK?':<3}  {'IPv4':<17}  {'IPv6':<39}  {'ISP'}\n"
+                )
+                f.write(
+                    f"{'─'*22}  {'─'*10}  {'─'*22}  "
+                    f"{'─'*8}  {'─'*3}  {'─'*17}  {'─'*39}  {'─'*28}\n"
+                )
+                for r in dns_rows:
+                    ts_str       = datetime.fromtimestamp(r["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                    rt           = f"{r['response_time_ms']:.1f}" if r["response_time_ms"] is not None else "—"
+                    ok           = "yes" if r["success"] else "no"
+                    ipv4, ipv6, isp = active_ip_at(r["timestamp"])
+                    f.write(
+                        f"{ts_str:<22}  {r['dns_provider']:<10}  {r['domain']:<22}  "
+                        f"{rt:>8}  {ok:<3}  {ipv4:<17}  {ipv6:<39}  {isp}\n"
+                    )
+                if not dns_rows:
                     f.write("  (no records)\n")
 
             self._log_event(f"Exported log to {path}", "info")
@@ -487,7 +487,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260603a\n\n"
+            "Version 20260604a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

@@ -142,7 +142,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260604a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -157,7 +157,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260603a), description text, OK button
+                                   version (20260604a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -231,18 +231,18 @@ EXPORT LOG (File > Export to Log File…)
   Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
   Write a header (title + generated timestamp), then three sections:
 
-  Section 1 — DNS RESULTS
+  Section 1 — DNS FAILURES
+    The subset of dns_results rows where success = 0. Columns: timestamp,
+    provider, domain, IPv4, IPv6, ISP. Response time and OK? are omitted.
+
+  Section 2 — IP CHECK FAILURES
+    Every ip_failures row. Single column: Timestamp.
+
+  Section 3 — DNS RESULTS
     Every dns_results row. Columns: timestamp, provider, domain, response time,
     success flag ("yes"/"no"), IPv4, IPv6, ISP. Determine the active IP/ISP by
     walking the ip_log rows (sorted ascending) and finding the last transition
     whose timestamp <= the DNS row's timestamp.
-
-  Section 2 — DNS FAILURES
-    The subset of dns_results rows where success = 0. Same columns as DNS RESULTS
-    except response time and OK? are omitted (both are always "—" / "no").
-
-  Section 3 — IP CHECK FAILURES
-    Every ip_failures row. Single column: Timestamp.
 
   For all sections: format timestamps as "YYYY-MM-DD HH:MM:SS"; show "—" for
   missing IPv6 or unknown fields; write "  (no records)" when a section is empty.

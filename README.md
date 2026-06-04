@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260603a**
+**Version 20260604a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -418,14 +418,14 @@ The tray right-click menu provides:
 `uptime_log_YYYYMMDD_HHMMSS.txt`) and writes a human-readable text file with
 three sections:
 
-- **DNS RESULTS** — every DNS query with timestamp, provider, domain, response
-  time, success flag, and the IPv4, IPv6, and ISP active at that moment (resolved
-  from the `ip_log` transition history).
-- **DNS FAILURES** — the subset of DNS results where the query failed, with the
-  same IP/ISP context columns.
+- **DNS FAILURES** — the subset of DNS results where the query failed, with
+  timestamp, provider, domain, and the IPv4, IPv6, and ISP active at that moment.
 - **IP CHECK FAILURES** — each moment the public IP lookup failed (transitions
   from working to `None`), with the timestamp of when the failure was first
   detected.
+- **DNS RESULTS** — every DNS query with timestamp, provider, domain, response
+  time, success flag, and the IPv4, IPv6, and ISP active at that moment (resolved
+  from the `ip_log` transition history).
 
 A confirmation entry is added to the Event Log on success.
 
