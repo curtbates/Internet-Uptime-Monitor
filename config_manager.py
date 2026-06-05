@@ -6,6 +6,9 @@ from pathlib import Path
 # baseline without requiring any initial setup from the user.
 DEFAULT_CONFIG = {
     "polling_interval_seconds": 60,
+    "log_only_incomplete_dns": True,
+    "save_event_log": False,
+    "log_ip_success": True,
     "dns_providers": [
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},

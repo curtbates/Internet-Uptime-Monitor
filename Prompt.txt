@@ -35,6 +35,9 @@ CONFIG (config.json, stored next to the scripts)
 
 Defaults if file is missing or corrupt:
     polling_interval_seconds: 60
+    log_only_incomplete_dns: true
+    save_event_log: false
+    log_ip_success: true
     dns_providers: [
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},
@@ -43,6 +46,29 @@ Defaults if file is missing or corrupt:
         {"name": "Comodo",     "server": "8.26.56.26"}
     ]
     domains: ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"]
+
+log_only_incomplete_dns (bool, default true):
+    When true, the per-poll DNS summary line is written to the Event Log only when
+    at least one query failed (ok_count < total). When false, the summary line is
+    written after every poll regardless of outcome.
+
+save_event_log (bool, default false):
+    When true, every message passed to _log_event() is appended to event.log in the
+    app data directory (same folder as uptime_monitor.db). When the user saves the
+    dialog with this value false, delete event.log if it exists.
+
+    Event log file path:
+        Windows   %APPDATA%\InternetUptimeMonitor\event.log
+        Linux     ~/.InternetUptimeMonitor/event.log
+
+    Use open(APP_DIR / "event.log", "a", encoding="utf-8") and silently swallow
+    OSError so a permissions problem cannot crash the app.
+
+log_ip_success (bool, default true):
+    When true, IP address change and detection messages are written to the Event Log.
+    When false, only the IP check failure message is logged. The database inserts
+    (insert_ip_log, insert_ip_failure) and _last_ip / _last_ipv6 state updates are
+    unaffected by this setting.
 
 ---
 
@@ -54,7 +80,9 @@ never inside a cloud-sync folder (Google Drive, OneDrive, etc.):
     Linux     ~/.InternetUptimeMonitor/uptime_monitor.db
 
 Create the directory with parents=True, exist_ok=True on module import using
-pathlib and os.environ.get("APPDATA", Path.home()).
+pathlib and os.environ.get("APPDATA", Path.home()). Expose the directory as the
+module-level constant APP_DIR (no leading underscore) so other modules can import
+it to locate sibling files such as event.log.
 
 Table dns_results:
     id               INTEGER PRIMARY KEY AUTOINCREMENT
@@ -142,7 +170,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260604a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260605a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -157,7 +185,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260604a), description text, OK button
+                                   version (20260605a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -184,6 +212,16 @@ CONTENT AREA
                                    IPv6 change, config update)
     No tag (default colour) when some but not all lookups failed.
 
+_log_event(msg, tag):
+  Inserts "[HH:MM:SS] msg\n" into the Text widget with the given tag.
+  If config.get("save_event_log", False) is true, also appends the same line
+  to APP_DIR / "event.log" (open in "a", encoding="utf-8"). Silently swallow
+  OSError so a file-system problem cannot crash the app.
+
+_open_setup (Setup > Configure… handler):
+  After the user saves the dialog, if config.get("save_event_log", False) is
+  false, delete APP_DIR / "event.log" if it exists (Path.unlink()).
+
 BOTTOM BAR
   "▶  Start Monitoring" / "■  Stop Monitoring" toggle button (left)
   "Interval: N s" label in gray (left, next to button)
@@ -202,19 +240,22 @@ MONITORING LOOP
              to avoid spurious "lost IPv6" events)
           - If ip_changed OR ipv6_changed: insert one ip_log row with current
             IPv4, IPv6, ISP.
-          - If ip_changed: log "Public IP changed to / detected as X  (ISP)"
-            with "info" tag; update _last_ip.
-          - If ipv6_changed and NOT ip_changed: log "Public IP: X  (ISP)"
+          - If ip_changed: if log_ip_success, log "Public IP changed to / detected as X  (ISP)"
+            with "info" tag; update _last_ip always (regardless of logging flag).
+          - If ipv6_changed and NOT ip_changed: if log_ip_success, log "Public IP: X  (ISP)"
             with "info" tag (current IPv4 for context alongside the IPv6 event).
-          - If ipv6_changed: log "Public IPv6 changed to / detected as X  (ISP)"
-            with "info" tag; update _last_ipv6.
+          - If ipv6_changed: if log_ip_success, log "Public IPv6 changed to / detected as X  (ISP)"
+            with "info" tag; update _last_ipv6 always (regardless of logging flag).
+            (log_ip_success = config.get("log_ip_success", True))
       • If ip_info is None and _last_ip is not None: log the failure once with
         "fail" tag; call insert_ip_failure(ts) to persist the event; reset both
         _last_ip and _last_ipv6 to None so the next successful poll re-logs
         both addresses even if unchanged.
       • Compute the summary score (see Score Formula below) and store as _last_score.
       • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
-        with ok/fail/no-tag colouring as described above.
+        with ok/fail/no-tag colouring as described above, but only when
+        log_only_incomplete_dns is false OR ok_count < total.
+        (log_only_incomplete_dns = config.get("log_only_incomplete_dns", True))
       • Update "Last check" and "Next" labels in the status bar.
       • Refresh the graph panel.
       • Update the tray icon.
@@ -306,7 +347,7 @@ there are no results for the selected range.
 
 SETUP DIALOG (gui/setup_dialog.py)
 
-Modal Toplevel, 520×460, not resizable. Three-tab Notebook:
+Modal Toplevel, 520×460, not resizable. Four-tab Notebook:
 
 Tab 1 — DNS Providers
   Listbox showing "Name  (server_ip)" for each provider, with vertical scrollbar.
@@ -320,8 +361,29 @@ Tab 2 — Domains
 Tab 3 — Settings
   Spinbox for polling interval (10–3600 seconds).
 
+Tab 4 — Event Log
+  Three checkboxes (top to bottom):
+
+  1. "Log only incomplete DNS response result messages" (default: checked)
+     Controls config key log_only_incomplete_dns.
+     Checked:   the DNS poll summary line is suppressed when all queries succeed.
+     Unchecked: the DNS poll summary line is written after every poll.
+
+  2. "Log IP successful detection messages" (default: checked)
+     Controls config key log_ip_success.
+     Checked:   IP address change and detection messages appear in the Event Log.
+     Unchecked: only IP check failure messages are logged; state tracking (_last_ip,
+                _last_ipv6) and database inserts are unaffected.
+
+  3. "Save Event Log" (default: unchecked)
+     Controls config key save_event_log.
+     Checked:   every _log_event message is appended to event.log in APP_DIR.
+     Unchecked: no file is written; the file is deleted on Save if it exists.
+
 Save button validates: interval in range, at least one provider, at least one domain.
 Cancel discards all changes. self.result is None on cancel, updated config dict on save.
+The dialog deep-copies all four config keys on open so edits don't affect the live
+config until the user clicks Save.
 
 ---
 

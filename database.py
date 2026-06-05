@@ -6,9 +6,9 @@ import os
 # (e.g. Google Drive, OneDrive). Syncing a SQLite file that is written to every
 # few seconds causes Google Drive to create conflict copies and can silently
 # replace the local database with an older cloud version, wiping accumulated data.
-_APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "InternetUptimeMonitor"
-_APP_DIR.mkdir(parents=True, exist_ok=True)
-DB_FILE = _APP_DIR / "uptime_monitor.db"
+APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "InternetUptimeMonitor"
+APP_DIR.mkdir(parents=True, exist_ok=True)
+DB_FILE = APP_DIR / "uptime_monitor.db"
 
 
 def _connect():

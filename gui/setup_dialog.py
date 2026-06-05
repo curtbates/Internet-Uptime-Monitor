@@ -16,6 +16,9 @@ class SetupDialog:
         # don't affect the live config until the user explicitly saves.
         self._cfg = {
             "polling_interval_seconds": config.get("polling_interval_seconds", 60),
+            "log_only_incomplete_dns":  config.get("log_only_incomplete_dns", True),
+            "save_event_log":           config.get("save_event_log", False),
+            "log_ip_success":           config.get("log_ip_success", True),
             "dns_providers": [p.copy() for p in config.get("dns_providers", [])],
             "domains":       list(config.get("domains", [])),
         }
@@ -49,6 +52,10 @@ class SetupDialog:
         set_frame = ttk.Frame(nb)
         nb.add(set_frame, text="Settings")
         self._build_settings_tab(set_frame)
+
+        log_frame = ttk.Frame(nb)
+        nb.add(log_frame, text="Event Log")
+        self._build_event_log_tab(log_frame)
 
         # Save / Cancel buttons live outside the notebook so they're always
         # visible regardless of which tab is active.
@@ -210,6 +217,35 @@ class SetupDialog:
         ttk.Label(f, text="min 10 s, max 3600 s", foreground="gray").grid(
             row=1, column=1, sticky=tk.W, padx=12)
 
+    # ------------------------------------------------------------------ Event Log tab
+
+    def _build_event_log_tab(self, parent):
+        f = ttk.Frame(parent, padding="24 24")
+        f.pack(fill=tk.BOTH, expand=True)
+
+        self._log_only_incomplete_var = tk.BooleanVar(
+            value=self._cfg["log_only_incomplete_dns"]
+        )
+        ttk.Checkbutton(
+            f,
+            text="Log only incomplete DNS response result messages",
+            variable=self._log_only_incomplete_var,
+        ).grid(row=0, column=0, sticky=tk.W, pady=8)
+
+        self._log_ip_success_var = tk.BooleanVar(value=self._cfg["log_ip_success"])
+        ttk.Checkbutton(
+            f,
+            text="Log IP successful detection messages",
+            variable=self._log_ip_success_var,
+        ).grid(row=1, column=0, sticky=tk.W, pady=8)
+
+        self._save_event_log_var = tk.BooleanVar(value=self._cfg["save_event_log"])
+        ttk.Checkbutton(
+            f,
+            text="Save Event Log",
+            variable=self._save_event_log_var,
+        ).grid(row=2, column=0, sticky=tk.W, pady=8)
+
     # ------------------------------------------------------------------
 
     def _save(self):
@@ -240,5 +276,8 @@ class SetupDialog:
             return
 
         self._cfg["polling_interval_seconds"] = interval
+        self._cfg["log_only_incomplete_dns"]  = self._log_only_incomplete_var.get()
+        self._cfg["save_event_log"]           = self._save_event_log_var.get()
+        self._cfg["log_ip_success"]           = self._log_ip_success_var.get()
         self.result = self._cfg    # signal to the caller that the user saved
         self.top.destroy()

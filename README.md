@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260604a**
+**Version 20260605a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -130,13 +130,16 @@ Internet Uptime Monitor/
 └── gui/
     ├── __init__.py
     ├── main_window.py    Main application window, polling engine, event log.
-    ├── setup_dialog.py   Modal "Configure…" dialog (three tabs).
+    ├── setup_dialog.py   Modal "Configure…" dialog (four tabs).
     └── graph_panel.py    matplotlib graph widget with view/range controls.
 
-The SQLite database is stored outside the project folder to avoid cloud-sync conflicts:
+The SQLite database and optional event log are stored outside the project folder to
+avoid cloud-sync conflicts:
 
   Windows   %APPDATA%\InternetUptimeMonitor\uptime_monitor.db
+            %APPDATA%\InternetUptimeMonitor\event.log   (only when "Save Event Log" is enabled)
   Linux     ~/.InternetUptimeMonitor/uptime_monitor.db
+            ~/.InternetUptimeMonitor/event.log          (only when "Save Event Log" is enabled)
 ```
 
 ---
@@ -146,6 +149,9 @@ The SQLite database is stored outside the project folder to avoid cloud-sync con
 ```json
 {
   "polling_interval_seconds": 60,
+  "log_only_incomplete_dns": true,
+  "save_event_log": false,
+  "log_ip_success": true,
   "dns_providers": [
     {"name": "Google",     "server": "8.8.8.8"},
     {"name": "Cloudflare", "server": "1.1.1.1"},
@@ -157,13 +163,16 @@ The SQLite database is stored outside the project folder to avoid cloud-sync con
 }
 ```
 
-| Key | Type | Description |
-|---|---|---|
-| `polling_interval_seconds` | integer | Seconds between poll cycles. Range: 10–3600. |
-| `dns_providers` | array | List of `{"name": "…", "server": "…"}` objects. |
-| `dns_providers[].name` | string | Display name shown in graphs and the Setup dialog. |
-| `dns_providers[].server` | string | IPv4 address of the DNS resolver. |
-| `domains` | array | Domain names to resolve each cycle. |
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `polling_interval_seconds` | integer | 60 | Seconds between poll cycles. Range: 10–3600. |
+| `log_only_incomplete_dns` | boolean | true | When true, the DNS poll summary line is only written to the Event Log when at least one query failed. When false, every poll result is logged. |
+| `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory. When false, no file is written and any existing file is deleted. |
+| `log_ip_success` | boolean | true | When true, IP address change and detection messages are written to the Event Log. When false, only IP check failure messages are logged. |
+| `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. |
+| `dns_providers[].name` | string | — | Display name shown in graphs and the Setup dialog. |
+| `dns_providers[].server` | string | — | IPv4 address of the DNS resolver. |
+| `domains` | array | (5 domains) | Domain names to resolve each cycle. |
 
 You can edit `config.json` directly with a text editor, or use **Setup → Configure…**
 in the app. Changes made in the dialog take effect immediately without restarting.
@@ -332,13 +341,24 @@ blue = informational (IPv4 change, IPv6 change, config update, start/stop).
 
 #### `SetupDialog` (setup_dialog.py)
 
-A modal `Toplevel` window with three notebook tabs:
+A modal `Toplevel` window with four notebook tabs:
 
 - **DNS Providers** — listbox of current providers; select one to populate the
   name/server fields below; Add / Update / Remove buttons.
 - **Domains** — listbox of domains; Enter key or Add button appends; Remove
   deletes the selected entry.
 - **Settings** — `Spinbox` for the polling interval (10–3600 s).
+- **Event Log** — three checkboxes that control what is written to the on-screen
+  Event Log and the optional log file:
+  - *Log only incomplete DNS response result messages* — when checked (default),
+    the per-poll DNS summary line is suppressed if every query succeeded; it is
+    always shown when any query fails.
+  - *Log IP successful detection messages* — when checked (default), IP address
+    change and detection events appear in the Event Log; when unchecked, only IP
+    check failure messages are shown.
+  - *Save Event Log* — when checked, every Event Log message is appended to
+    `event.log` in the app data directory (`%APPDATA%\InternetUptimeMonitor\` on
+    Windows). Unchecking immediately deletes the file.
 
 The dialog operates on a deep copy of the config dict; changes are only applied
 to the live config when **Save** is clicked. **Cancel** discards all edits.

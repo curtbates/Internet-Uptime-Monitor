@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from tkinter import filedialog, ttk
 
 from config_manager import load_config, save_config
-from database import initialize_db, purge_old_records, insert_dns_result, insert_ip_log, insert_ip_failure, get_latest_ip, get_dns_results, get_ip_log, get_ip_failures
+from database import APP_DIR, initialize_db, purge_old_records, insert_dns_result, insert_ip_log, insert_ip_failure, get_latest_ip, get_dns_results, get_ip_log, get_ip_failures
 from dns_checker import check_dns
 from ip_tracker import get_public_ip_info
 from gui.setup_dialog import SetupDialog
@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260604a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260605a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -185,6 +185,12 @@ class MainWindow:
         self._log.insert(tk.END, f"[{ts}] {msg}\n", tag)
         self._log.see(tk.END)           # auto-scroll to the newest entry
         self._log.configure(state=tk.DISABLED)
+        if self.config.get("save_event_log", False):
+            try:
+                with open(APP_DIR / "event.log", "a", encoding="utf-8") as fh:
+                    fh.write(f"[{ts}] {msg}\n")
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ monitoring
 
@@ -293,16 +299,20 @@ class MainWindow:
 
             if ip_changed or ipv6_changed:
                 insert_ip_log(ts, ip, isp, ip_info.get("org"), ipv6)
+                log_ip = self.config.get("log_ip_success", True)
                 if ip_changed:
                     verb = "changed to" if self._last_ip else "detected as"
-                    self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
+                    if log_ip:
+                        self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
                     self._last_ip = ip
                 elif ipv6_changed:
                     # IPv6 changed but IPv4 didn't — log current IPv4 for context.
-                    self._log_event(f"Public IP: {ip}  ({isp})", "info")
+                    if log_ip:
+                        self._log_event(f"Public IP: {ip}  ({isp})", "info")
                 if ipv6_changed:
                     verb = "changed to" if self._last_ipv6 else "detected as"
-                    self._log_event(f"Public IPv6 {verb} {ipv6}  ({isp})", "info")
+                    if log_ip:
+                        self._log_event(f"Public IPv6 {verb} {ipv6}  ({isp})", "info")
                     self._last_ipv6 = ipv6
 
             self._set_ip(ip, isp)
@@ -338,7 +348,8 @@ class MainWindow:
         # Green if everything passed, red if everything failed, no tag (default)
         # if it was a partial failure.
         tag = "ok" if ok_count == total else ("fail" if ok_count == 0 else "")
-        self._log_event(f"DNS poll: {ok_count}/{total} succeeded{avg}", tag)
+        if not self.config.get("log_only_incomplete_dns", True) or ok_count < total:
+            self._log_event(f"DNS poll: {ok_count}/{total} succeeded{avg}", tag)
 
         self._last_lbl.configure(
             text=f"Last check: {datetime.fromtimestamp(ts).strftime('%H:%M:%S')}"
@@ -474,6 +485,10 @@ class MainWindow:
         if dlg.result:
             self.config = dlg.result   # replace the live config with the new values
             save_config(self.config)
+            if not self.config.get("save_event_log", False):
+                log_path = APP_DIR / "event.log"
+                if log_path.exists():
+                    log_path.unlink()
             self._refresh_interval_label()
             self._log_event("Configuration updated.", "info")
             self._graph.refresh()      # re-draw in case display options changed
@@ -487,7 +502,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260604a\n\n"
+            "Version 20260605a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
