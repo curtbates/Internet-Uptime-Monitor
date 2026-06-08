@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260605a**
+**Version 20260608a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -231,22 +231,32 @@ response returns `(True, response_time_ms)`.
 
 ### IP and ISP detection (`ip_tracker.py`)
 
-**IPv4** is fetched by trying `https://ipinfo.io/json` first, then
-`https://ipapi.co/json/` as a fallback. Requests to those services are forced
-over IPv4 via a custom `HTTPAdapter` (`_ForceIPv4Adapter`) that pins
-`urllib3`'s address-family preference to `AF_INET` for the duration of the
-call. This ensures the service always echoes back the machine's IPv4 address
-rather than its IPv6 address on dual-stack connections.
+**IPv4** is fetched by trying four services in order, stopping at the first
+that returns a valid IP:
+
+| Service | Response format |
+|---|---|
+| `https://ipinfo.io/json` | JSON — includes IP, org/ISP |
+| `https://ipapi.co/json/` | JSON — includes IP, org/ISP |
+| `https://api.ipify.org?format=json` | JSON — IP only |
+| `https://checkip.amazonaws.com` | Plain text — IP only |
+
+All four must fail before `get_public_ip_info()` returns `None` and a failure
+event is logged. The first two services also return an `org` field in the format
+`"AS12345 ISP Name"`; the ASN prefix is stripped so only the human-readable ISP
+name is stored and displayed. The last two services provide no ISP data; the ISP
+field is shown as "Unknown" when either of those is the one that responds.
+
+Requests to all four services are forced over IPv4 via a custom `HTTPAdapter`
+(`_ForceIPv4Adapter`) that pins `urllib3`'s address-family preference to
+`AF_INET` for the duration of the call. This ensures the service always echoes
+back the machine's IPv4 address rather than its IPv6 address on dual-stack
+connections.
 
 **IPv6** is fetched separately by hitting `https://api6.ipify.org?format=json`,
 an endpoint that has only AAAA DNS records and therefore only responds over
 IPv6. If the machine has no IPv6 connectivity the connection fails silently and
 `None` is returned for the IPv6 field.
-
-Both services return an `org` field in the format `"AS12345 ISP Name"`. The ASN
-prefix is stripped so only the human-readable ISP name is stored and displayed.
-If all services are unreachable `get_public_ip_info()` returns `None` and the
-status bar retains its previous value.
 
 IPv4 and IPv6 are tracked **independently** — a new `ip_log` row is inserted
 whenever either address changes. This captures ISP failovers (IPv4 change) and
@@ -594,9 +604,11 @@ home networks block outbound UDP/TCP port 53 to third-party resolvers. Try
 changing one provider to your router's IP (e.g. `192.168.1.1`).
 
 **IP always shows "Unknown" or never updates**
-The app queries `ipinfo.io` and `ipapi.co`; both require outbound HTTPS access.
-If your network blocks them the IP display will not update, but DNS monitoring
-continues normally.
+The app tries four services in order: `ipinfo.io`, `ipapi.co`, `api.ipify.org`,
+and `checkip.amazonaws.com`. All four require outbound HTTPS access. If your
+network blocks all of them the IP display will not update, but DNS monitoring
+continues normally. If the first two are blocked but the latter two succeed,
+the ISP field will show "Unknown" since those services return only the IP address.
 
 **High response times to all providers**
 This is expected if you are measuring from a busy or distant machine. The

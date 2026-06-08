@@ -147,8 +147,16 @@ for both "https://" and "http://", and use _ipv4_session.get() for all IPv4
 service calls.
 
 Try these services in order via _ipv4_session, falling through on any error:
-  1. https://ipinfo.io/json     — ip field = "ip", org field = "org"
-  2. https://ipapi.co/json/     — ip field = "ip", org field = "org" or "isp"
+  1. https://ipinfo.io/json            — JSON; ip field = "ip", org field = "org"
+  2. https://ipapi.co/json/            — JSON; ip field = "ip", org field = "org" or "isp"
+  3. https://api.ipify.org?format=json — JSON; ip field = "ip", no org field
+  4. https://checkip.amazonaws.com     — plain text; entire response body is the IP
+
+For services 1 and 2, parse via resp.json(). For services 3 and 4, resp.json()
+may raise ValueError (plain text); catch ValueError, use resp.text.strip() as
+the IP, and treat data as {} so org/isp fields resolve to "Unknown".
+
+Only return None after all four services have been tried and failed.
 
 Strip the leading ASN token (e.g. "AS7922 Comcast...") from the org field so
 the displayed ISP name is human-readable. Store the raw org string separately.
@@ -170,7 +178,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260605a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260608a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -185,7 +193,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260605a), description text, OK button
+                                   version (20260608a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:

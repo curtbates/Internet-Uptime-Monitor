@@ -5,8 +5,10 @@ from requests.adapters import HTTPAdapter
 # Two free IP-info services tried in order. If the first is unreachable or
 # returns unexpected data, the loop falls through to the second automatically.
 _SERVICES = [
-    "https://ipinfo.io/json",   # primary: returns {"ip", "org", "city", ...}
-    "https://ipapi.co/json/",   # fallback: returns {"ip", "org", "isp", ...}
+    "https://ipinfo.io/json",             # returns {"ip", "org", "city", ...}
+    "https://ipapi.co/json/",             # returns {"ip", "org", "isp", ...}
+    "https://api.ipify.org?format=json",  # returns {"ip": "x.x.x.x"}
+    "https://checkip.amazonaws.com",      # returns plain-text IP
 ]
 
 # IPv6-only endpoint — only reachable over IPv6. A connection failure means
@@ -54,17 +56,20 @@ def get_public_ip_info(timeout=10):
         try:
             resp = _ipv4_session.get(url, timeout=timeout)
             resp.raise_for_status()     # treat HTTP 4xx/5xx as failures
-            data = resp.json()
 
-            # ipinfo.io uses "ip"; some other services use "query".
-            # The "or" chain tries each key in turn and skips this service if
-            # neither key yields a non-empty value.
-            ip = data.get("ip") or data.get("query")
+            # Most services return JSON; checkip.amazonaws.com returns plain text.
+            try:
+                data = resp.json()
+                ip = data.get("ip") or data.get("query")
+            except ValueError:
+                ip = resp.text.strip() or None
+                data = {}
+
             if not ip:
                 continue    # malformed response — try the next service
 
             # ipinfo.io puts the ISP in "org"; ipapi.co uses "org" or "isp".
-            # The chained "or" handles all three field names.
+            # Plain-text services provide no org info; data={} yields empty string.
             org = data.get("org", "") or data.get("isp", "") or ""
 
             # Both services prefix the ISP name with an ASN token, e.g.:
