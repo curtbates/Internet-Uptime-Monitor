@@ -178,7 +178,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260608a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260609a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -193,7 +193,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260608a), description text, OK button
+                                   version (20260609a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -274,7 +274,7 @@ SCORE FORMULA (used both in the live poll handler and the graph panel)
   success_rate = successful_lookups / total_lookups   (0.0–1.0)
   rt_score     = clamp(1.0 - (avg_response_time_ms - 20) / 480, 0.0, 1.0)
                  (20 ms → 1.0,  500 ms → 0.0)
-  score        = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
+  score        = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
 
 EXPORT LOG (File > Export to Log File…)
   Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
@@ -344,7 +344,7 @@ SUMMARY SCORE VIEW
     - Compute score using the Score Formula above
   Plot a single steelblue line with shaded fill_between (alpha=0.25).
   Add dashed reference lines: orange at 80 ("Good (80)"), red at 50 ("Poor (50)").
-  Title: "Summary Score  (70 % success rate + 30 % response time)"
+  Title: "Summary Score  (50 % success rate + 50 % response time)"
   Y-axis: "Score (0 – 100)", ylim (0, 105) for visual headroom above 100.
 
 Refresh the graph after every completed poll and whenever the user changes the

@@ -272,7 +272,7 @@ class GraphPanel:
                 rt_score = 0.0
 
             # Weighted combination: success rate matters more than raw speed.
-            score = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
+            score = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
             xs.append(datetime.fromtimestamp(t))
             scores.append(score)
 
@@ -284,7 +284,7 @@ class GraphPanel:
             self.ax.axhline(80, color="orange", linestyle="--", alpha=0.7, label="Good (80)")
             self.ax.axhline(50, color="red",    linestyle="--", alpha=0.7, label="Poor (50)")
 
-        self.ax.set_title("Summary Score  (70 % success rate + 30 % response time)")
+        self.ax.set_title("Summary Score  (50 % success rate + 50 % response time)")
         self.ax.set_ylabel("Score (0 – 100)")
         self.ax.set_ylim(0, 105)    # headroom above 100 so the line isn't clipped
         self.ax.legend()

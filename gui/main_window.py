@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260608a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260609a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -338,7 +338,7 @@ class MainWindow:
             rt_score = max(0.0, min(1.0, 1.0 - (avg_rt - 20) / 480))
         else:
             rt_score = 0.0
-        self._last_score = min(100.0, (success_rate * 0.7 + rt_score * 0.3) * 100)
+        self._last_score = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
 
         # Summarise the poll results in the event log with colour coding.
         ok_count = sum(1 for r in dns_results if r["success"])
@@ -502,7 +502,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260608a\n\n"
+            "Version 20260609a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260608a**
+**Version 20260609a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -488,7 +488,7 @@ success_rate  =  successful_queries / total_queries
 rt_score      =  clamp(1 − (avg_response_ms − 20) / 480, 0, 1)
                # 20 ms → 1.0 (perfect),  500 ms → 0.0 (worst)
 
-score         =  (success_rate × 0.70  +  rt_score × 0.30) × 100
+score         =  (success_rate × 0.50  +  rt_score × 0.50) × 100
 ```
 
 Reference lines: **orange dashed at 80** (Good), **red dashed at 50** (Poor).
