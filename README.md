@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260609a**
+**Version 20260611a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -100,15 +100,14 @@ Both files persist between sessions.
 
 ## Quick Start
 
-1. Launch the app with `python main.py`.
+1. Launch the app with `python main.py`. Monitoring starts automatically on launch
+   and the first poll runs immediately.
 2. Optionally open **Setup → Configure…** to change DNS providers, domains, or the
    polling interval.
-3. Click **▶ Start Monitoring**. The first poll runs immediately; subsequent polls run
-   after the configured interval.
-4. Watch the Event Log for per-poll results and the graph for historical trends.
-5. Click **■ Stop Monitoring** to pause polling, or minimize/close the window to send
-   the app to the system tray (polling continues). Right-click the tray icon to
-   restore, toggle monitoring, or exit completely.
+3. Watch the Event Log for per-poll results and the graph for historical trends.
+4. Click **■ Stop Monitoring** to pause polling (or **▶ Start Monitoring** to resume),
+   or minimize/close the window to send the app to the system tray (polling continues).
+   Right-click the tray icon to restore, toggle monitoring, or exit completely.
 
 ---
 
@@ -167,7 +166,7 @@ avoid cloud-sync conflicts:
 |---|---|---|---|
 | `polling_interval_seconds` | integer | 60 | Seconds between poll cycles. Range: 10–3600. |
 | `log_only_incomplete_dns` | boolean | true | When true, the DNS poll summary line is only written to the Event Log when at least one query failed. When false, every poll result is logged. |
-| `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory. When false, no file is written and any existing file is deleted. |
+| `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory in the format `[YYYY-MM-DD HH:MM:SS] message`. When false, no file is written and any existing file is deleted. |
 | `log_ip_success` | boolean | true | When true, IP address change and detection messages are written to the Event Log. When false, only IP check failure messages are logged. |
 | `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. |
 | `dns_providers[].name` | string | — | Display name shown in graphs and the Setup dialog. |
@@ -194,6 +193,8 @@ in the app. Changes made in the dialog take effect immediately without restartin
    (`_schedule_daily_purge`).
 3. The last known public IP is read from the database and pre-populated in the
    status bar so it is visible before the first poll completes.
+4. `_start()` is called automatically at the end of `__init__` — monitoring begins
+   immediately without requiring the user to click a button.
 
 ### Polling cycle
 
@@ -346,7 +347,8 @@ The top-level window is assembled from four regions packed into the root window:
 └─────────────────────────────────────────────────────┘
 ```
 
-Event log colours: green = all queries succeeded, red = all failed,
+Each entry is prefixed with a `[YYYY-MM-DD HH:MM:SS]` timestamp.
+Colour coding: green = all queries succeeded, red = all failed,
 blue = informational (IPv4 change, IPv6 change, config update, start/stop).
 
 #### `SetupDialog` (setup_dialog.py)
@@ -385,6 +387,7 @@ The controls bar contains three groups:
 |---|---|
 | View radio buttons | Switch between By Provider, By Domain, and Summary Score |
 | Range combobox | Select the time window (1 h – 7 d) |
+| Refresh button | Immediately redraw the graph without waiting for the next poll |
 | ISP combobox | Filter all graph views to a single ISP, or show All ISPs |
 
 The ISP list is populated from the `ip_log` table and refreshed on every

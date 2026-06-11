@@ -1,8 +1,8 @@
 {
-  "polling_interval_seconds": 15,
+  "polling_interval_seconds": 10,
   "log_only_incomplete_dns": true,
   "save_event_log": true,
-  "log_ip_success": false,
+  "log_ip_success": true,
   "dns_providers": [
     {
       "name": "Google",
@@ -17,12 +17,12 @@
       "server": "208.67.222.222"
     },
     {
-      "name": "Quad9",
-      "server": "9.9.9.9"
+      "name": "Spectrum 71.10.216.1",
+      "server": "71.10.216.1"
     },
     {
-      "name": "Spectrum",
-      "server": "71.10.216.1"
+      "name": "Spectrum 71.10.216.2",
+      "server": "71.10.216.2"
     }
   ],
   "domains": [

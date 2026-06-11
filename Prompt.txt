@@ -178,7 +178,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260609a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260611a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -193,7 +193,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260609a), description text, OK button
+                                   version (20260611a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -221,7 +221,7 @@ CONTENT AREA
     No tag (default colour) when some but not all lookups failed.
 
 _log_event(msg, tag):
-  Inserts "[HH:MM:SS] msg\n" into the Text widget with the given tag.
+  Inserts "[YYYY-MM-DD HH:MM:SS] msg\n" into the Text widget with the given tag.
   If config.get("save_event_log", False) is true, also appends the same line
   to APP_DIR / "event.log" (open in "a", encoding="utf-8"). Silently swallow
   OSError so a file-system problem cannot crash the app.

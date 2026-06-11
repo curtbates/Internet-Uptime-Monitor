@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260609a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260611a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -178,7 +178,7 @@ class MainWindow:
     # ------------------------------------------------------------------ logging
 
     def _log_event(self, msg: str, tag: str = ""):
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         # Must briefly enable the widget to insert text, then disable again to
         # keep it read-only for the user.
         self._log.configure(state=tk.NORMAL)
@@ -502,7 +502,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260609a\n\n"
+            "Version 20260611a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
