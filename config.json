@@ -1,21 +1,9 @@
 {
-  "polling_interval_seconds": 10,
+  "polling_interval_seconds": 15,
   "log_only_incomplete_dns": true,
   "save_event_log": true,
   "log_ip_success": true,
   "dns_providers": [
-    {
-      "name": "Google",
-      "server": "8.8.8.8"
-    },
-    {
-      "name": "Cloudflare",
-      "server": "1.1.1.1"
-    },
-    {
-      "name": "OpenDNS",
-      "server": "208.67.222.222"
-    },
     {
       "name": "Spectrum 71.10.216.1",
       "server": "71.10.216.1"
@@ -23,6 +11,18 @@
     {
       "name": "Spectrum 71.10.216.2",
       "server": "71.10.216.2"
+    },
+    {
+      "name": "Quad9",
+      "server": "9.9.9.9"
+    },
+    {
+      "name": "Cloudflare",
+      "server": "1.1.1.1"
+    },
+    {
+      "name": "OpenDNS",
+      "server": "208.67.222.123"
     }
   ],
   "domains": [

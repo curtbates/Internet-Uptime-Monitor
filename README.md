@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260611a**
+**Version 20260613a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -332,19 +332,19 @@ pretty-printed JSON.
 The top-level window is assembled from four regions packed into the root window:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ Menu bar  [File | Setup | Help]                      │
-├─────────────────────────────────────────────────────┤
-│ Status bar  IP │ ISP │ ● Status │ Last check │ Next  │
-├─────────────────────────────────────────────────────┤
-│                                                     │
-│   Graph panel  (view controls + matplotlib canvas)  │
-│                                                     │
-├─────────────────────────────────────────────────────┤
-│ Event Log  (scrollable, colour-coded text)          │
-├─────────────────────────────────────────────────────┤
-│ ▶ Start Monitoring          Interval: 60 s          │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Menu bar  [File | Setup | Help]                               │
+├──────────────────────────────────────────────────────────────┤
+│ Status bar  IPv4 │ IPv6 │ ISP │ ● Status │ Last check │ Next  │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│   Graph panel  (view controls + matplotlib canvas)           │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│ Event Log  (scrollable, colour-coded text)                   │
+├──────────────────────────────────────────────────────────────┤
+│ ▶ Start Monitoring          Interval: 60 s                   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 Each entry is prefixed with a `[YYYY-MM-DD HH:MM:SS]` timestamp.
@@ -515,7 +515,7 @@ the most readable label format for the selected range.
 
 If you have a primary and a backup ISP configured with automatic failover, you
 will see the public IP change in the Event Log and `ip_log` table every time a
-switchover occurs. The status bar always shows the current public IPv4 and ISP name.
+switchover occurs. The status bar always shows the current public IPv4, IPv6, and ISP name.
 IPv4 and IPv6 are tracked independently — a rotation of either address generates
 its own timestamped event log entry and `ip_log` row.
 The `ip_log` table gives you a complete switchover history with timestamps, which

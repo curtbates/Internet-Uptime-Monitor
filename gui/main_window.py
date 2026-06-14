@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260611a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260613a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -68,7 +68,7 @@ class MainWindow:
         if latest:
             self._last_ip   = latest["public_ip"]
             self._last_ipv6 = latest.get("public_ipv6")
-            self._set_ip(latest["public_ip"], latest.get("isp_name") or "Unknown")
+            self._set_ip(latest["public_ip"], latest.get("isp_name") or "Unknown", latest.get("public_ipv6"))
 
         self._start()
 
@@ -109,8 +109,12 @@ class MainWindow:
         bar.pack(side=tk.TOP, fill=tk.X)
 
         # Each piece of information is separated by a vertical line for readability.
-        self._ip_lbl = ttk.Label(bar, text="IP: —")
+        self._ip_lbl = ttk.Label(bar, text="IPv4: —")
         self._ip_lbl.pack(side=tk.LEFT, padx=6)
+        ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        self._ipv6_lbl = ttk.Label(bar, text="IPv6: —")
+        self._ipv6_lbl.pack(side=tk.LEFT, padx=6)
         ttk.Separator(bar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
         self._isp_lbl = ttk.Label(bar, text="ISP: —")
@@ -315,7 +319,7 @@ class MainWindow:
                         self._log_event(f"Public IPv6 {verb} {ipv6}  ({isp})", "info")
                     self._last_ipv6 = ipv6
 
-            self._set_ip(ip, isp)
+            self._set_ip(ip, isp, ipv6)
         else:
             # Log once when the lookup first fails, then reset _last_ip so the
             # next successful poll always logs the restored IP — even if it
@@ -469,8 +473,9 @@ class MainWindow:
         except Exception as exc:
             tk.messagebox.showerror("Export Failed", str(exc), parent=self.root)
 
-    def _set_ip(self, ip: str, isp: str):
-        self._ip_lbl.configure(text=f"IP: {ip}")
+    def _set_ip(self, ip: str, isp: str, ipv6: str | None = None):
+        self._ip_lbl.configure(text=f"IPv4: {ip}")
+        self._ipv6_lbl.configure(text=f"IPv6: {ipv6}" if ipv6 else "IPv6: —")
         self._isp_lbl.configure(text=f"ISP: {isp}")
 
     def _refresh_interval_label(self):
@@ -502,7 +507,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260611a\n\n"
+            "Version 20260613a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"
