@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260613a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260620a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -352,8 +352,16 @@ class MainWindow:
         # Green if everything passed, red if everything failed, no tag (default)
         # if it was a partial failure.
         tag = "ok" if ok_count == total else ("fail" if ok_count == 0 else "")
-        if not self.config.get("log_only_incomplete_dns", True) or ok_count < total:
+        if self.config.get("log_dns", True) and (
+            not self.config.get("log_only_incomplete_dns", True) or ok_count < total
+        ):
             self._log_event(f"DNS poll: {ok_count}/{total} succeeded{avg}", tag)
+
+        if self.config.get("log_score", True) and self._last_score is not None:
+            score = self._last_score
+            if not self.config.get("log_score_below_80_only", False) or score < 80:
+                score_tag = "ok" if score >= 80 else ("fail" if score < 50 else "")
+                self._log_event(f"Score: {score:.1f}/100", score_tag)
 
         self._last_lbl.configure(
             text=f"Last check: {datetime.fromtimestamp(ts).strftime('%H:%M:%S')}"
@@ -507,7 +515,7 @@ class MainWindow:
         msg = (
             "Internet Uptime Monitor\n"
             "by Curt Bates\n"
-            "Version 20260613a\n\n"
+            "Version 20260620a\n\n"
             "Monitors DNS response times across multiple providers and domains.\n"
             "Tracks public IP and ISP changes.\n\n"
             "Data is stored locally in uptime_monitor.db.\n\n"

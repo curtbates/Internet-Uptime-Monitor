@@ -35,7 +35,10 @@ CONFIG (config.json, stored next to the scripts)
 
 Defaults if file is missing or corrupt:
     polling_interval_seconds: 60
+    log_dns: true
     log_only_incomplete_dns: true
+    log_score: true
+    log_score_below_80_only: false
     save_event_log: false
     log_ip_success: true
     dns_providers: [
@@ -47,10 +50,25 @@ Defaults if file is missing or corrupt:
     ]
     domains: ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"]
 
+log_dns (bool, default true):
+    When true, DNS poll summary lines are written to the Event Log.
+    When false, all DNS poll messages are suppressed regardless of
+    log_only_incomplete_dns.
+
 log_only_incomplete_dns (bool, default true):
+    Effective only when log_dns is true.
     When true, the per-poll DNS summary line is written to the Event Log only when
     at least one query failed (ok_count < total). When false, the summary line is
     written after every poll regardless of outcome.
+
+log_score (bool, default true):
+    When true, the computed summary score (0–100) is written to the Event Log after
+    each poll, colour-coded with the "ok" tag (green) when score >= 80, the "fail"
+    tag (red) when score < 50, and no tag otherwise.
+
+log_score_below_80_only (bool, default false):
+    Effective only when log_score is true.
+    When true, score messages are suppressed unless the score is below 80.
 
 save_event_log (bool, default false):
     When true, every message passed to _log_event() is appended to event.log in the
@@ -178,7 +196,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260613a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260620a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -193,7 +211,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260613a), description text, OK button
+                                   version (20260620a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -263,8 +281,14 @@ MONITORING LOOP
       • Compute the summary score (see Score Formula below) and store as _last_score.
       • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
         with ok/fail/no-tag colouring as described above, but only when
-        log_only_incomplete_dns is false OR ok_count < total.
+        log_dns is true AND (log_only_incomplete_dns is false OR ok_count < total).
+        (log_dns = config.get("log_dns", True))
         (log_only_incomplete_dns = config.get("log_only_incomplete_dns", True))
+      • If log_score is true and (log_score_below_80_only is false OR score < 80):
+        log "Score: X.X/100" with "ok" tag when score >= 80, "fail" tag when
+        score < 50, no tag otherwise.
+        (log_score = config.get("log_score", True))
+        (log_score_below_80_only = config.get("log_score_below_80_only", False))
       • Update "Last check" and "Next" labels in the status bar.
       • Refresh the graph panel.
       • Update the tray icon.
@@ -371,12 +395,18 @@ Tab 3 — Settings
   Spinbox for polling interval (10–3600 seconds).
 
 Tab 4 — Event Log
-  Three checkboxes (top to bottom):
+  Checkboxes (top to bottom); indented sub-checkboxes are disabled when their
+  parent is unchecked:
 
-  1. "Log only incomplete DNS response result messages" (default: checked)
-     Controls config key log_only_incomplete_dns.
-     Checked:   the DNS poll summary line is suppressed when all queries succeed.
-     Unchecked: the DNS poll summary line is written after every poll.
+  1. "Log DNS responses to event window" (default: checked)
+     Controls config key log_dns.
+     Checked:   DNS poll summary lines are written to the Event Log.
+     Unchecked: all DNS poll messages are suppressed.
+
+     1a. "Only log incomplete DNS responses" (sub, indented, default: checked)
+         Controls config key log_only_incomplete_dns.
+         Checked:   the DNS summary line is suppressed when all queries succeed.
+         Unchecked: the DNS summary line is written after every poll.
 
   2. "Log IP successful detection messages" (default: checked)
      Controls config key log_ip_success.
@@ -384,15 +414,26 @@ Tab 4 — Event Log
      Unchecked: only IP check failure messages are logged; state tracking (_last_ip,
                 _last_ipv6) and database inserts are unaffected.
 
-  3. "Save Event Log" (default: unchecked)
+  3. "Log score to event window" (default: checked)
+     Controls config key log_score.
+     Checked:   the summary score (0–100) is written to the Event Log after each poll.
+     Unchecked: no score messages are written.
+
+     3a. "Only log scores below 80" (sub, indented, default: unchecked)
+         Controls config key log_score_below_80_only.
+         Checked:   score messages are suppressed unless the score is below 80.
+         Unchecked: every score is logged.
+
+  4. "Save Event Log" (default: unchecked)
      Controls config key save_event_log.
      Checked:   every _log_event message is appended to event.log in APP_DIR.
      Unchecked: no file is written; the file is deleted on Save if it exists.
 
 Save button validates: interval in range, at least one provider, at least one domain.
 Cancel discards all changes. self.result is None on cancel, updated config dict on save.
-The dialog deep-copies all four config keys on open so edits don't affect the live
-config until the user clicks Save.
+The dialog deep-copies all config keys on open so edits don't affect the live config
+until the user clicks Save. Sub-checkboxes use a command= callback on their parent to
+toggle their tk.DISABLED / tk.NORMAL state immediately when the parent is clicked.
 
 ---
 

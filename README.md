@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260613a**
+**Version 20260620a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -148,7 +148,10 @@ avoid cloud-sync conflicts:
 ```json
 {
   "polling_interval_seconds": 60,
+  "log_dns": true,
   "log_only_incomplete_dns": true,
+  "log_score": true,
+  "log_score_below_80_only": false,
   "save_event_log": false,
   "log_ip_success": true,
   "dns_providers": [
@@ -165,7 +168,10 @@ avoid cloud-sync conflicts:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `polling_interval_seconds` | integer | 60 | Seconds between poll cycles. Range: 10–3600. |
-| `log_only_incomplete_dns` | boolean | true | When true, the DNS poll summary line is only written to the Event Log when at least one query failed. When false, every poll result is logged. |
+| `log_dns` | boolean | true | When true, DNS poll summary lines are written to the Event Log. When false, all DNS poll messages are suppressed regardless of `log_only_incomplete_dns`. |
+| `log_only_incomplete_dns` | boolean | true | Effective only when `log_dns` is true. When true, the DNS poll summary line is suppressed if every query succeeded; it is always shown when any query fails. When false, every poll result is logged. |
+| `log_score` | boolean | true | When true, the computed summary score is written to the Event Log after each poll. |
+| `log_score_below_80_only` | boolean | false | Effective only when `log_score` is true. When true, score messages are only written when the score is below 80. |
 | `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory in the format `[YYYY-MM-DD HH:MM:SS] message`. When false, no file is written and any existing file is deleted. |
 | `log_ip_success` | boolean | true | When true, IP address change and detection messages are written to the Event Log. When false, only IP check failure messages are logged. |
 | `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. |
@@ -360,14 +366,23 @@ A modal `Toplevel` window with four notebook tabs:
 - **Domains** — listbox of domains; Enter key or Add button appends; Remove
   deletes the selected entry.
 - **Settings** — `Spinbox` for the polling interval (10–3600 s).
-- **Event Log** — three checkboxes that control what is written to the on-screen
+- **Event Log** — checkboxes that control what is written to the on-screen
   Event Log and the optional log file:
-  - *Log only incomplete DNS response result messages* — when checked (default),
-    the per-poll DNS summary line is suppressed if every query succeeded; it is
-    always shown when any query fails.
+  - *Log DNS responses to event window* — when checked (default), DNS poll
+    summary lines are written to the Event Log. Unchecking suppresses all DNS
+    messages regardless of the sub-option below.
+    - *Only log incomplete DNS responses* — sub-option (disabled when the
+      parent is unchecked). When checked (default), the DNS summary line is
+      suppressed if every query succeeded; it is always shown when any query fails.
   - *Log IP successful detection messages* — when checked (default), IP address
     change and detection events appear in the Event Log; when unchecked, only IP
     check failure messages are shown.
+  - *Log score to event window* — when checked (default), the computed summary
+    score (0–100) is written to the Event Log after each poll, colour-coded green
+    (≥ 80), uncoloured (50–79), or red (< 50).
+    - *Only log scores below 80* — sub-option (disabled when the parent is
+      unchecked). When checked, score messages are suppressed unless the score
+      drops below 80.
   - *Save Event Log* — when checked, every Event Log message is appended to
     `event.log` in the app data directory (`%APPDATA%\InternetUptimeMonitor\` on
     Windows). Unchecking immediately deletes the file.

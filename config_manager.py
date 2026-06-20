@@ -6,7 +6,10 @@ from pathlib import Path
 # baseline without requiring any initial setup from the user.
 DEFAULT_CONFIG = {
     "polling_interval_seconds": 60,
+    "log_dns": True,
     "log_only_incomplete_dns": True,
+    "log_score": True,
+    "log_score_below_80_only": False,
     "save_event_log": False,
     "log_ip_success": True,
     "dns_providers": [

@@ -16,7 +16,10 @@ class SetupDialog:
         # don't affect the live config until the user explicitly saves.
         self._cfg = {
             "polling_interval_seconds": config.get("polling_interval_seconds", 60),
+            "log_dns":                  config.get("log_dns", True),
             "log_only_incomplete_dns":  config.get("log_only_incomplete_dns", True),
+            "log_score":                config.get("log_score", True),
+            "log_score_below_80_only":  config.get("log_score_below_80_only", False),
             "save_event_log":           config.get("save_event_log", False),
             "log_ip_success":           config.get("log_ip_success", True),
             "dns_providers": [p.copy() for p in config.get("dns_providers", [])],
@@ -223,28 +226,63 @@ class SetupDialog:
         f = ttk.Frame(parent, padding="24 24")
         f.pack(fill=tk.BOTH, expand=True)
 
+        self._log_dns_var = tk.BooleanVar(value=self._cfg["log_dns"])
+        ttk.Checkbutton(
+            f,
+            text="Log DNS responses to event window",
+            variable=self._log_dns_var,
+            command=self._on_log_dns_toggle,
+        ).grid(row=0, column=0, sticky=tk.W, pady=8)
+
         self._log_only_incomplete_var = tk.BooleanVar(
             value=self._cfg["log_only_incomplete_dns"]
         )
-        ttk.Checkbutton(
+        self._log_only_incomplete_cb = ttk.Checkbutton(
             f,
-            text="Log only incomplete DNS response result messages",
+            text="Only log incomplete DNS responses",
             variable=self._log_only_incomplete_var,
-        ).grid(row=0, column=0, sticky=tk.W, pady=8)
+        )
+        self._log_only_incomplete_cb.grid(row=1, column=0, sticky=tk.W, pady=4, padx=(24, 0))
+        self._on_log_dns_toggle()  # set initial enabled/disabled state
 
         self._log_ip_success_var = tk.BooleanVar(value=self._cfg["log_ip_success"])
         ttk.Checkbutton(
             f,
             text="Log IP successful detection messages",
             variable=self._log_ip_success_var,
-        ).grid(row=1, column=0, sticky=tk.W, pady=8)
+        ).grid(row=2, column=0, sticky=tk.W, pady=8)
+
+        self._log_score_var = tk.BooleanVar(value=self._cfg["log_score"])
+        ttk.Checkbutton(
+            f,
+            text="Log score to event window",
+            variable=self._log_score_var,
+            command=self._on_log_score_toggle,
+        ).grid(row=3, column=0, sticky=tk.W, pady=8)
+
+        self._log_score_below_80_var = tk.BooleanVar(value=self._cfg["log_score_below_80_only"])
+        self._log_score_below_80_cb = ttk.Checkbutton(
+            f,
+            text="Only log scores below 80",
+            variable=self._log_score_below_80_var,
+        )
+        self._log_score_below_80_cb.grid(row=4, column=0, sticky=tk.W, pady=4, padx=(24, 0))
+        self._on_log_score_toggle()  # set initial enabled/disabled state
 
         self._save_event_log_var = tk.BooleanVar(value=self._cfg["save_event_log"])
         ttk.Checkbutton(
             f,
             text="Save Event Log",
             variable=self._save_event_log_var,
-        ).grid(row=2, column=0, sticky=tk.W, pady=8)
+        ).grid(row=5, column=0, sticky=tk.W, pady=8)
+
+    def _on_log_dns_toggle(self):
+        state = tk.NORMAL if self._log_dns_var.get() else tk.DISABLED
+        self._log_only_incomplete_cb.configure(state=state)
+
+    def _on_log_score_toggle(self):
+        state = tk.NORMAL if self._log_score_var.get() else tk.DISABLED
+        self._log_score_below_80_cb.configure(state=state)
 
     # ------------------------------------------------------------------
 
@@ -276,7 +314,10 @@ class SetupDialog:
             return
 
         self._cfg["polling_interval_seconds"] = interval
+        self._cfg["log_dns"]                 = self._log_dns_var.get()
         self._cfg["log_only_incomplete_dns"]  = self._log_only_incomplete_var.get()
+        self._cfg["log_score"]               = self._log_score_var.get()
+        self._cfg["log_score_below_80_only"] = self._log_score_below_80_var.get()
         self._cfg["save_event_log"]           = self._save_event_log_var.get()
         self._cfg["log_ip_success"]           = self._log_ip_success_var.get()
         self.result = self._cfg    # signal to the caller that the user saved
