@@ -52,6 +52,8 @@ def _fetch_ipv6(timeout=5):
 
 def get_public_ip_info(timeout=10):
     """Returns {'ip': str, 'ipv6': str|None, 'isp': str, 'org': str} or None on complete failure."""
+    fallback_ip = None  # best IP seen so far when a service returns no ISP data
+
     for url in _SERVICES:
         try:
             resp = _ipv4_session.get(url, timeout=timeout)
@@ -72,6 +74,14 @@ def get_public_ip_info(timeout=10):
             # Plain-text services provide no org info; data={} yields empty string.
             org = data.get("org", "") or data.get("isp", "") or ""
 
+            if not org:
+                # This service gave us an IP but no ISP data (e.g. ipinfo.io
+                # returning incomplete data under rate limiting). Save the IP and
+                # keep trying subsequent services that may have ISP info.
+                if fallback_ip is None:
+                    fallback_ip = ip
+                continue
+
             # Both services prefix the ISP name with an ASN token, e.g.:
             #   "AS7922 Comcast Cable Communications"
             # Strip that prefix so the status bar shows just "Comcast Cable
@@ -80,7 +90,7 @@ def get_public_ip_info(timeout=10):
                 parts = org.split(" ", 1)           # split on the first space only
                 isp = parts[1] if len(parts) > 1 else org
             else:
-                isp = org or "Unknown"
+                isp = org
 
             ipv6 = _fetch_ipv6()
             return {"ip": ip, "ipv6": ipv6, "isp": isp, "org": org}
@@ -89,5 +99,11 @@ def get_public_ip_info(timeout=10):
             # Network error, timeout, or JSON parse failure — try the next service.
             continue
 
-    # All services failed (e.g. no internet at all). Caller handles None gracefully.
+    # All services failed to provide ISP data. If at least one returned an IP,
+    # report that with an unknown ISP rather than treating it as a full failure.
+    if fallback_ip:
+        ipv6 = _fetch_ipv6()
+        return {"ip": fallback_ip, "ipv6": ipv6, "isp": "Unknown", "org": ""}
+
+    # No service returned a usable IP. Caller handles None gracefully.
     return None

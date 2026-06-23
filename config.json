@@ -3,7 +3,7 @@
   "log_dns": true,
   "log_only_incomplete_dns": true,
   "log_score": true,
-  "log_score_below_80_only": false,
+  "log_score_below_80_only": true,
   "save_event_log": true,
   "log_ip_success": true,
   "dns_providers": [

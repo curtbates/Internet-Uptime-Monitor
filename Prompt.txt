@@ -164,20 +164,32 @@ original. Mount this adapter on a module-level requests.Session (_ipv4_session)
 for both "https://" and "http://", and use _ipv4_session.get() for all IPv4
 service calls.
 
-Try these services in order via _ipv4_session, falling through on any error:
+Try these services in order via _ipv4_session, falling through on any exception:
   1. https://ipinfo.io/json            — JSON; ip field = "ip", org field = "org"
   2. https://ipapi.co/json/            — JSON; ip field = "ip", org field = "org" or "isp"
   3. https://api.ipify.org?format=json — JSON; ip field = "ip", no org field
   4. https://checkip.amazonaws.com     — plain text; entire response body is the IP
 
-For services 1 and 2, parse via resp.json(). For services 3 and 4, resp.json()
-may raise ValueError (plain text); catch ValueError, use resp.text.strip() as
-the IP, and treat data as {} so org/isp fields resolve to "Unknown".
+For each service, attempt resp.json() first to extract ip and org/isp. Catch
+ValueError (plain text response) and fall back to resp.text.strip() as the IP
+with data = {}.
 
-Only return None after all four services have been tried and failed.
+After extracting the IP, check for ISP data:
+    org = data.get("org", "") or data.get("isp", "") or ""
 
-Strip the leading ASN token (e.g. "AS7922 Comcast...") from the org field so
-the displayed ISP name is human-readable. Store the raw org string separately.
+If org is empty (services 3 and 4 never provide one; services 1 or 2 may omit
+it under rate limiting), save the IP as fallback_ip (only the first such IP
+is kept) and continue to the next service. Do NOT return "Unknown" immediately.
+
+If org is non-empty, strip the leading ASN token (e.g. "AS7922 Comcast...") and
+use the remainder as the displayed ISP name; store the raw org string separately.
+Return immediately with this result.
+
+After the loop:
+  - If any service returned both IP and org, it was already returned above.
+  - If at least one service returned an IP but none provided org data, return
+    {"ip": fallback_ip, "ipv6": ..., "isp": "Unknown", "org": ""}.
+  - Only return None when every service failed to return any usable IP.
 
 IPv6 fetch
 ----------
@@ -196,7 +208,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260620a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260623a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -211,7 +223,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260620a), description text, OK button
+                                   version (20260623a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
