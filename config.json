@@ -6,6 +6,7 @@
   "log_score_below_80_only": true,
   "save_event_log": true,
   "log_ip_success": true,
+  "log_isp_changes": true,
   "dns_providers": [
     {
       "name": "Spectrum 71.10.216.1",

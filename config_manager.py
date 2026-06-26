@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "log_score_below_80_only": False,
     "save_event_log": False,
     "log_ip_success": True,
+    "log_isp_changes": True,
     "dns_providers": [
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},

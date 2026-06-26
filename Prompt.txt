@@ -41,6 +41,7 @@ Defaults if file is missing or corrupt:
     log_score_below_80_only: false
     save_event_log: false
     log_ip_success: true
+    log_isp_changes: true
     dns_providers: [
         {"name": "Google",     "server": "8.8.8.8"},
         {"name": "Cloudflare", "server": "1.1.1.1"},
@@ -87,6 +88,13 @@ log_ip_success (bool, default true):
     When false, only the IP check failure message is logged. The database inserts
     (insert_ip_log, insert_ip_failure) and _last_ip / _last_ipv6 state updates are
     unaffected by this setting.
+
+log_isp_changes (bool, default true):
+    When true, a dedicated "ISP changed from X to Y" message (with "info" tag) is
+    written to the Event Log whenever the detected ISP name differs from the
+    previously recorded ISP name on an IPv4 change event. When false, ISP transitions
+    are still recorded in the database (via insert_ip_log) but no extra event log
+    message is generated. The _last_isp state update is unaffected by this setting.
 
 ---
 
@@ -208,7 +216,7 @@ and include the result as "ipv6" in the returned dict.
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260623a"
+Window title: "Internet Uptime Monitor - by Curt Bates - v20260626a"
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -223,7 +231,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260623a), description text, OK button
+                                   version (20260626a), description text, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -269,7 +277,8 @@ MONITORING LOOP
   - Use root.after() to schedule polls; run actual DNS + IP work in a daemon thread.
   - Use a queue.Queue to pass results from the worker thread back to the main thread.
   - Drain the queue every 200 ms with root.after(200, _queue_check).
-  - Track _last_ip (IPv4) and _last_ipv6 separately in MainWindow.__init__.
+  - Track _last_ip (IPv4), _last_ipv6, and _last_isp separately in MainWindow.__init__.
+    Pre-populate all three from the most recent ip_log record on startup.
   - On each completed poll cycle:
       • Write all DNS results to the database.
       • If ip_info is not None:
@@ -279,13 +288,19 @@ MONITORING LOOP
              to avoid spurious "lost IPv6" events)
           - If ip_changed OR ipv6_changed: insert one ip_log row with current
             IPv4, IPv6, ISP.
-          - If ip_changed: if log_ip_success, log "Public IP changed to / detected as X  (ISP)"
-            with "info" tag; update _last_ip always (regardless of logging flag).
+          - If ip_changed:
+              • If _last_isp is not None and isp != _last_isp and log_isp_changes:
+                log "ISP changed from <_last_isp> to <isp>" with "info" tag.
+              • Update _last_isp = isp always (regardless of logging flag).
+              • If log_ip_success, log "Public IP changed to / detected as X  (ISP)"
+                with "info" tag.
+              • Update _last_ip always (regardless of logging flag).
           - If ipv6_changed and NOT ip_changed: if log_ip_success, log "Public IP: X  (ISP)"
             with "info" tag (current IPv4 for context alongside the IPv6 event).
           - If ipv6_changed: if log_ip_success, log "Public IPv6 changed to / detected as X  (ISP)"
             with "info" tag; update _last_ipv6 always (regardless of logging flag).
-            (log_ip_success = config.get("log_ip_success", True))
+            (log_ip_success  = config.get("log_ip_success", True))
+            (log_isp_changes = config.get("log_isp_changes", True))
       • If ip_info is None and _last_ip is not None: log the failure once with
         "fail" tag; call insert_ip_failure(ts) to persist the event; reset both
         _last_ip and _last_ipv6 to None so the next successful poll re-logs
@@ -426,17 +441,26 @@ Tab 4 — Event Log
      Unchecked: only IP check failure messages are logged; state tracking (_last_ip,
                 _last_ipv6) and database inserts are unaffected.
 
-  3. "Log score to event window" (default: checked)
+  3. "Log ISP changes to event window" (default: checked)
+     Controls config key log_isp_changes.
+     Checked:   when the ISP name changes alongside an IPv4 address change, a
+                dedicated "ISP changed from X to Y" message is written to the
+                Event Log with the "info" tag.
+     Unchecked: ISP transitions are still recorded in the database but no extra
+                event log message is generated. The _last_isp state update is
+                unaffected.
+
+  4. "Log score to event window" (default: checked)
      Controls config key log_score.
      Checked:   the summary score (0–100) is written to the Event Log after each poll.
      Unchecked: no score messages are written.
 
-     3a. "Only log scores below 80" (sub, indented, default: unchecked)
+     4a. "Only log scores below 80" (sub, indented, default: unchecked)
          Controls config key log_score_below_80_only.
          Checked:   score messages are suppressed unless the score is below 80.
          Unchecked: every score is logged.
 
-  4. "Save Event Log" (default: unchecked)
+  5. "Save Event Log" (default: unchecked)
      Controls config key save_event_log.
      Checked:   every _log_event message is appended to event.log in APP_DIR.
      Unchecked: no file is written; the file is deleted on Save if it exists.

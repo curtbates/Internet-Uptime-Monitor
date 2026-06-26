@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260623a**
+**Version 20260626a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -154,6 +154,7 @@ avoid cloud-sync conflicts:
   "log_score_below_80_only": false,
   "save_event_log": false,
   "log_ip_success": true,
+  "log_isp_changes": true,
   "dns_providers": [
     {"name": "Google",     "server": "8.8.8.8"},
     {"name": "Cloudflare", "server": "1.1.1.1"},
@@ -174,6 +175,7 @@ avoid cloud-sync conflicts:
 | `log_score_below_80_only` | boolean | false | Effective only when `log_score` is true. When true, score messages are only written when the score is below 80. |
 | `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory in the format `[YYYY-MM-DD HH:MM:SS] message`. When false, no file is written and any existing file is deleted. |
 | `log_ip_success` | boolean | true | When true, IP address change and detection messages are written to the Event Log. When false, only IP check failure messages are logged. |
+| `log_isp_changes` | boolean | true | When true, a dedicated "ISP changed from X to Y" message is written to the Event Log whenever the detected ISP name changes with an IP change. When false, ISP transitions are still recorded in the database but no extra event log message is generated. |
 | `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. |
 | `dns_providers[].name` | string | — | Display name shown in graphs and the Setup dialog. |
 | `dns_providers[].server` | string | — | IPv4 address of the DNS resolver. |
@@ -381,6 +383,11 @@ A modal `Toplevel` window with four notebook tabs:
   - *Log IP successful detection messages* — when checked (default), IP address
     change and detection events appear in the Event Log; when unchecked, only IP
     check failure messages are shown.
+  - *Log ISP changes to event window* — when checked (default), a dedicated
+    "ISP changed from X to Y" message is written to the Event Log whenever the
+    ISP name changes alongside an IP address change. Useful for dual-ISP setups
+    where you want a clear record of each failover event separate from the raw
+    IP change message.
   - *Log score to event window* — when checked (default), the computed summary
     score (0–100) is written to the Event Log after each poll, colour-coded green
     (≥ 80), uncoloured (50–79), or red (< 50).

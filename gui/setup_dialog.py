@@ -22,6 +22,7 @@ class SetupDialog:
             "log_score_below_80_only":  config.get("log_score_below_80_only", False),
             "save_event_log":           config.get("save_event_log", False),
             "log_ip_success":           config.get("log_ip_success", True),
+            "log_isp_changes":          config.get("log_isp_changes", True),
             "dns_providers": [p.copy() for p in config.get("dns_providers", [])],
             "domains":       list(config.get("domains", [])),
         }
@@ -252,13 +253,20 @@ class SetupDialog:
             variable=self._log_ip_success_var,
         ).grid(row=2, column=0, sticky=tk.W, pady=8)
 
+        self._log_isp_changes_var = tk.BooleanVar(value=self._cfg["log_isp_changes"])
+        ttk.Checkbutton(
+            f,
+            text="Log ISP changes to event window",
+            variable=self._log_isp_changes_var,
+        ).grid(row=3, column=0, sticky=tk.W, pady=8)
+
         self._log_score_var = tk.BooleanVar(value=self._cfg["log_score"])
         ttk.Checkbutton(
             f,
             text="Log score to event window",
             variable=self._log_score_var,
             command=self._on_log_score_toggle,
-        ).grid(row=3, column=0, sticky=tk.W, pady=8)
+        ).grid(row=4, column=0, sticky=tk.W, pady=8)
 
         self._log_score_below_80_var = tk.BooleanVar(value=self._cfg["log_score_below_80_only"])
         self._log_score_below_80_cb = ttk.Checkbutton(
@@ -266,7 +274,7 @@ class SetupDialog:
             text="Only log scores below 80",
             variable=self._log_score_below_80_var,
         )
-        self._log_score_below_80_cb.grid(row=4, column=0, sticky=tk.W, pady=4, padx=(24, 0))
+        self._log_score_below_80_cb.grid(row=5, column=0, sticky=tk.W, pady=4, padx=(24, 0))
         self._on_log_score_toggle()  # set initial enabled/disabled state
 
         self._save_event_log_var = tk.BooleanVar(value=self._cfg["save_event_log"])
@@ -274,7 +282,7 @@ class SetupDialog:
             f,
             text="Save Event Log",
             variable=self._save_event_log_var,
-        ).grid(row=5, column=0, sticky=tk.W, pady=8)
+        ).grid(row=6, column=0, sticky=tk.W, pady=8)
 
     def _on_log_dns_toggle(self):
         state = tk.NORMAL if self._log_dns_var.get() else tk.DISABLED
@@ -320,5 +328,6 @@ class SetupDialog:
         self._cfg["log_score_below_80_only"] = self._log_score_below_80_var.get()
         self._cfg["save_event_log"]           = self._save_event_log_var.get()
         self._cfg["log_ip_success"]           = self._log_ip_success_var.get()
+        self._cfg["log_isp_changes"]          = self._log_isp_changes_var.get()
         self.result = self._cfg    # signal to the caller that the user saved
         self.top.destroy()

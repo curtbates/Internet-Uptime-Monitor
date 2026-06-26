@@ -26,7 +26,7 @@ except ImportError:
 class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260623a")
+        self.root.title("Internet Uptime Monitor - by Curt Bates - v20260626a")
         self.root.geometry("1050x720")
         self.root.minsize(800, 580)
 
@@ -47,6 +47,7 @@ class MainWindow:
 
         self._last_ip:   str | None = None  # tracks last seen IPv4 to detect changes
         self._last_ipv6: str | None = None  # tracks last seen IPv6 to detect changes
+        self._last_isp:  str | None = None  # tracks last seen ISP name to detect changes
         self._last_score: float | None = None  # most recent summary score (0–100)
 
         # Tray state — both set together to prevent re-entrancy (see _on_unmap).
@@ -68,6 +69,7 @@ class MainWindow:
         if latest:
             self._last_ip   = latest["public_ip"]
             self._last_ipv6 = latest.get("public_ipv6")
+            self._last_isp  = latest.get("isp_name")
             self._set_ip(latest["public_ip"], latest.get("isp_name") or "Unknown", latest.get("public_ipv6"))
 
         self._start()
@@ -305,6 +307,10 @@ class MainWindow:
                 insert_ip_log(ts, ip, isp, ip_info.get("org"), ipv6)
                 log_ip = self.config.get("log_ip_success", True)
                 if ip_changed:
+                    if self._last_isp is not None and isp != self._last_isp:
+                        if self.config.get("log_isp_changes", True):
+                            self._log_event(f"ISP changed from {self._last_isp} to {isp}", "info")
+                    self._last_isp = isp
                     verb = "changed to" if self._last_ip else "detected as"
                     if log_ip:
                         self._log_event(f"Public IP {verb} {ip}  ({isp})", "info")
