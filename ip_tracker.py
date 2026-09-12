@@ -1,26 +1,40 @@
+import re
 import socket
 import requests
 from requests.adapters import HTTPAdapter
 
-# Two free IP-info services tried in order. If the first is unreachable or
-# returns unexpected data, the loop falls through to the second automatically.
-_SERVICES = [
-    "https://ipinfo.io/json",             # returns {"ip", "org", "city", ...}
-    "https://ipapi.co/json/",             # returns {"ip", "org", "isp", ...}
+# Fast, high-availability services used on every poll just to get the IP address.
+# These have no meaningful rate limits and return minimal data quickly.
+_IP_SERVICES = [
     "https://api.ipify.org?format=json",  # returns {"ip": "x.x.x.x"}
     "https://checkip.amazonaws.com",      # returns plain-text IP
 ]
 
-# IPv6-only endpoint — only reachable over IPv6. A connection failure means
-# the host has no IPv6 connectivity, which is a normal condition.
+# Services queried only when the IP changes, to look up the ISP.
+# ip-api.com allows 45 req/min on the free tier (HTTP only).
+# ipinfo.io and ipapi.co are fallbacks but have lower rate limits.
+_ISP_SERVICES = [
+    "http://ip-api.com/json/{ip}?fields=status,isp,org,query",
+    "https://ipinfo.io/json",
+    "https://ipapi.co/json/",
+]
+
+# IPv6-only endpoint — only reachable over IPv6.
 _IPV6_SERVICE = "https://api6.ipify.org?format=json"
+
+# Loose validation: four decimal octets, each 1-3 digits. Guards against
+# HTML error pages or unexpected text being stored in the DB as an IP address.
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def _is_valid_ipv4(addr: str) -> bool:
+    return bool(_IPV4_RE.match(addr))
 
 
 class _ForceIPv4Adapter(HTTPAdapter):
-    # On dual-stack machines requests may connect to ipinfo.io over IPv6, which
-    # causes the service to return the machine's IPv6 address as the "public IP"
-    # instead of the IPv4 address. Overriding allowed_gai_family() for the
-    # duration of the request forces the resolver to only return AF_INET results.
+    # On dual-stack machines requests may route to ipinfo.io over IPv6, which
+    # causes the service to return the machine's IPv6 address as the "public IP".
+    # Forcing AF_INET for the duration of the request avoids this.
     def send(self, *args, **kwargs):
         import urllib3.util.connection as _conn
         _orig = _conn.allowed_gai_family
@@ -31,79 +45,92 @@ class _ForceIPv4Adapter(HTTPAdapter):
             _conn.allowed_gai_family = _orig
 
 
-# Module-level session so the adapter and connection pool are reused across
-# calls rather than rebuilt on every poll.
+# Module-level session so the adapter and connection pool are reused across calls.
 _ipv4_session = requests.Session()
 _ipv4_session.mount("https://", _ForceIPv4Adapter())
 _ipv4_session.mount("http://",  _ForceIPv4Adapter())
 
 
-def _fetch_ipv6(timeout=5):
+def _fetch_ipv6(timeout: int = 5) -> str | None:
     """Return the public IPv6 address string, or None if the host has no IPv6."""
     try:
-        # Plain requests.get (not _ipv4_session) so the OS can use IPv6 to
-        # reach api6.ipify.org, which has AAAA records only.
         resp = requests.get(_IPV6_SERVICE, timeout=timeout)
         resp.raise_for_status()
         return resp.json().get("ip") or None
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError):
         return None
 
 
-def get_public_ip_info(timeout=10):
-    """Returns {'ip': str, 'ipv6': str|None, 'isp': str, 'org': str} or None on complete failure."""
-    fallback_ip = None  # best IP seen so far when a service returns no ISP data
+def get_public_ip(timeout: int = 10) -> str | None:
+    """Return just the public IPv4 address string, or None on failure.
 
-    for url in _SERVICES:
+    Uses lightweight services with no practical rate limits. Called every poll.
+    """
+    for url in _IP_SERVICES:
         try:
             resp = _ipv4_session.get(url, timeout=timeout)
-            resp.raise_for_status()     # treat HTTP 4xx/5xx as failures
-
-            # Most services return JSON; checkip.amazonaws.com returns plain text.
+            resp.raise_for_status()
             try:
-                data = resp.json()
-                ip = data.get("ip") or data.get("query")
+                ip = resp.json().get("ip")
             except ValueError:
                 ip = resp.text.strip() or None
-                data = {}
+            if ip and _is_valid_ipv4(ip):
+                return ip
+        except requests.RequestException:
+            continue
+    return None
 
-            if not ip:
-                continue    # malformed response — try the next service
 
-            # ipinfo.io puts the ISP in "org"; ipapi.co uses "org" or "isp".
-            # Plain-text services provide no org info; data={} yields empty string.
-            org = data.get("org", "") or data.get("isp", "") or ""
+def get_isp_for_ip(ip: str, timeout: int = 10) -> tuple[str, str]:
+    """Look up the ISP name and raw org string for a given IP address.
 
-            if not org:
-                # This service gave us an IP but no ISP data (e.g. ipinfo.io
-                # returning incomplete data under rate limiting). Save the IP and
-                # keep trying subsequent services that may have ISP info.
-                if fallback_ip is None:
-                    fallback_ip = ip
+    Returns (isp_name, org_raw). Called only when the IP changes, so rate
+    limits on free-tier services are not a concern.
+    """
+    for url_template in _ISP_SERVICES:
+        url = url_template.format(ip=ip)
+        try:
+            resp = _ipv4_session.get(url, timeout=timeout)
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except ValueError:
                 continue
 
-            # Both services prefix the ISP name with an ASN token, e.g.:
-            #   "AS7922 Comcast Cable Communications"
-            # Strip that prefix so the status bar shows just "Comcast Cable
-            # Communications" rather than the raw ASN string.
-            if org.startswith("AS"):
-                parts = org.split(" ", 1)           # split on the first space only
-                isp = parts[1] if len(parts) > 1 else org
-            else:
-                isp = org
+            # ip-api.com returns {"status": "success", "isp": "...", "org": "..."}
+            if data.get("status") == "success":
+                isp = data.get("isp") or data.get("org") or ""
+                org = data.get("org") or isp
+                if isp:
+                    return isp, org
 
-            ipv6 = _fetch_ipv6()
-            return {"ip": ip, "ipv6": ipv6, "isp": isp, "org": org}
+            # ipinfo.io / ipapi.co return {"org": "AS1234 ISP Name", "isp": "..."}
+            org = data.get("org", "") or data.get("isp", "") or ""
+            if org:
+                # Strip the leading ASN token (e.g. "AS7922 Comcast…" → "Comcast…")
+                if org.startswith("AS"):
+                    parts = org.split(" ", 1)
+                    isp = parts[1] if len(parts) > 1 else org
+                else:
+                    isp = org
+                return isp, org
 
-        except Exception:
-            # Network error, timeout, or JSON parse failure — try the next service.
+        except requests.RequestException:
             continue
 
-    # All services failed to provide ISP data. If at least one returned an IP,
-    # report that with an unknown ISP rather than treating it as a full failure.
-    if fallback_ip:
-        ipv6 = _fetch_ipv6()
-        return {"ip": fallback_ip, "ipv6": ipv6, "isp": "Unknown", "org": ""}
+    return "Unknown", ""
 
-    # No service returned a usable IP. Caller handles None gracefully.
-    return None
+
+def get_public_ip_info(timeout: int = 10) -> dict | None:
+    """Returns {'ip': str, 'ipv6': str|None, 'isp': str, 'org': str} or None.
+
+    Combines a fast IP fetch with a full ISP lookup. Use this on the first
+    poll or after detecting an IP change; use get_public_ip() for routine
+    polls where only the address is needed.
+    """
+    ip = get_public_ip(timeout=timeout)
+    if not ip:
+        return None
+    isp, org  = get_isp_for_ip(ip, timeout=timeout)
+    ipv6      = _fetch_ipv6()
+    return {"ip": ip, "ipv6": ipv6, "isp": isp, "org": org}

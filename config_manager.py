@@ -4,7 +4,8 @@ from pathlib import Path
 # Sensible out-of-the-box settings used when config.json is missing or corrupt.
 # Five well-known public DNS resolvers and two stable domains give a reasonable
 # baseline without requiring any initial setup from the user.
-DEFAULT_CONFIG = {
+DEFAULT_CONFIG: dict = {
+    "schema_version": 1,
     "polling_interval_seconds": 60,
     "log_dns": True,
     "log_only_incomplete_dns": True,
@@ -20,7 +21,9 @@ DEFAULT_CONFIG = {
         {"name": "Quad9",      "server": "9.9.9.9"},
         {"name": "Comodo",     "server": "8.26.56.26"},
     ],
-    "domains": ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"],
+    "domains": [
+        "google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"
+    ],
 }
 
 # Store config.json next to this script so the whole project stays self-contained
@@ -28,21 +31,27 @@ DEFAULT_CONFIG = {
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
 
-def load_config():
+def load_config() -> dict:
     # Only attempt to read the file if it actually exists; skip straight to the
     # default if not, rather than letting open() raise a FileNotFoundError.
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
+                cfg = json.load(f)
+            # Back-fill any keys added in newer versions so old config files
+            # continue to work without requiring a manual edit.
+            for key, value in DEFAULT_CONFIG.items():
+                cfg.setdefault(key, value)
+            return cfg
         except (json.JSONDecodeError, IOError):
             # Corrupt or unreadable file — silently fall back to defaults so the
             # app still starts instead of crashing on launch.
             pass
-    return DEFAULT_CONFIG.copy()   # copy() prevents callers from mutating the module-level dict
+    # copy() prevents callers from mutating the module-level dict
+    return DEFAULT_CONFIG.copy()
 
 
-def save_config(config):
+def save_config(config: dict) -> None:
     # indent=2 keeps the file human-readable so users can edit it by hand if
     # they prefer not to use the Setup dialog.
     with open(CONFIG_FILE, "w") as f:

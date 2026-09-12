@@ -1,6 +1,6 @@
 # Internet Uptime Monitor
 
-**Version 20260626a**
+**Version 20260912a**
 
 A desktop application for monitoring your ISP's reliability by measuring DNS lookup
 performance across multiple DNS providers, tracking your public IP address, and
@@ -40,6 +40,7 @@ polling.
 | matplotlib | >= 3.6.0 |
 | pystray | >= 0.19.0 |
 | Pillow | >= 9.0.0 |
+| pytest | >= 8.0.0 (optional, for running tests) |
 
 Python's built-in `tkinter` is used for the GUI and `sqlite3` for storage — no extra
 packages are required for either.
@@ -111,6 +112,18 @@ Both files persist between sessions.
 
 ---
 
+## Running the Tests
+
+```
+python -m pytest tests/
+```
+
+The test suite covers core logic without requiring a display or network access:
+score calculation, database CRUD, config load/save, IP address validation, and
+graph-panel bucketing. All 32 tests run in a few seconds.
+
+---
+
 ## File Layout
 
 ```
@@ -118,19 +131,33 @@ Internet Uptime Monitor/
 │
 ├── main.py               Entry point (terminal). Checks dependencies, starts tkinter event loop.
 ├── main.pyw              Entry point (no terminal). Same as main.py; errors shown via messagebox.
-├── config_manager.py     Loads and saves config.json.
+├── version.py            Single source of truth for __version__ (used by title bar and About dialog).
+├── utils.py              Shared helper: calculate_score() used by the poll handler and graph panel.
+├── config_manager.py     Loads and saves config.json; back-fills missing keys on upgrade.
 ├── database.py           All SQLite operations (schema, inserts, queries, cleanup).
 ├── dns_checker.py        Sends a single DNS A-record query to a specific server.
-├── ip_tracker.py         Fetches public IP and ISP name from external APIs.
+├── ip_tracker.py         Public IP and ISP lookup (split: fast check every poll,
+│                         ISP lookup only on IP change to avoid API rate limits).
 │
 ├── config.json           User configuration (edited via Setup dialog or directly).
-├── requirements.txt      pip dependency list.
+├── requirements.txt      pip dependency list (includes pytest for running tests).
 │
-└── gui/
-    ├── __init__.py
-    ├── main_window.py    Main application window, polling engine, event log.
-    ├── setup_dialog.py   Modal "Configure…" dialog (four tabs).
-    └── graph_panel.py    matplotlib graph widget with view/range controls.
+├── gui/
+│   ├── __init__.py
+│   ├── main_window.py    Main application window; composes _PollMixin and _TrayMixin.
+│   ├── _poll_mixin.py    Polling loop: worker thread, queue drain, result handler.
+│   ├── _tray_mixin.py    System tray: icon creation, hide/restore, tray menu.
+│   ├── setup_dialog.py   Modal "Configure…" dialog (four tabs); Save disabled live
+│   │                     when provider or domain list is empty.
+│   └── graph_panel.py    matplotlib graph widget with view/range/ISP controls.
+│
+└── tests/
+    ├── conftest.py        Redirects DB to a temp directory for test isolation.
+    ├── test_utils.py      calculate_score() edge cases.
+    ├── test_database.py   All database CRUD and purge functions.
+    ├── test_config.py     load_config / save_config / back-fill / schema_version.
+    ├── test_ip_tracker.py _is_valid_ipv4() validation.
+    └── test_graph_panel.py Bucket and bucket_success helpers.
 
 The SQLite database and optional event log are stored outside the project folder to
 avoid cloud-sync conflicts:
@@ -147,6 +174,7 @@ avoid cloud-sync conflicts:
 
 ```json
 {
+  "schema_version": 1,
   "polling_interval_seconds": 60,
   "log_dns": true,
   "log_only_incomplete_dns": true,
@@ -168,6 +196,7 @@ avoid cloud-sync conflicts:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
+| `schema_version` | integer | 1 | Config format version. Any keys missing from an older file are silently back-filled from defaults on load. |
 | `polling_interval_seconds` | integer | 60 | Seconds between poll cycles. Range: 10–3600. |
 | `log_dns` | boolean | true | When true, DNS poll summary lines are written to the Event Log. When false, all DNS poll messages are suppressed regardless of `log_only_incomplete_dns`. |
 | `log_only_incomplete_dns` | boolean | true | Effective only when `log_dns` is true. When true, the DNS poll summary line is suppressed if every query succeeded; it is always shown when any query fails. When false, every poll result is logged. |
@@ -175,11 +204,11 @@ avoid cloud-sync conflicts:
 | `log_score_below_80_only` | boolean | false | Effective only when `log_score` is true. When true, score messages are only written when the score is below 80. |
 | `save_event_log` | boolean | false | When true, every Event Log message is appended to `event.log` in the app data directory in the format `[YYYY-MM-DD HH:MM:SS] message`. When false, no file is written and any existing file is deleted. |
 | `log_ip_success` | boolean | true | When true, IP address change and detection messages are written to the Event Log. When false, only IP check failure messages are logged. |
-| `log_isp_changes` | boolean | true | When true, a dedicated "ISP changed from X to Y" message is written to the Event Log whenever the detected ISP name changes with an IP change. When false, ISP transitions are still recorded in the database but no extra event log message is generated. |
-| `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. |
+| `log_isp_changes` | boolean | true | When true and both IP and ISP change in the same poll, the log entry combines them: `"Public IP changed to X  (ISP: Old → New)"`. When only the ISP changes without an IP change (rare), a separate `"ISP changed from X to Y"` line is written. |
+| `dns_providers` | array | (5 providers) | List of `{"name": "…", "server": "…"}` objects. At least one is required. |
 | `dns_providers[].name` | string | — | Display name shown in graphs and the Setup dialog. |
 | `dns_providers[].server` | string | — | IPv4 address of the DNS resolver. |
-| `domains` | array | (5 domains) | Domain names to resolve each cycle. |
+| `domains` | array | (5 domains) | Domain names to resolve each cycle. At least one is required. |
 
 You can edit `config.json` directly with a text editor, or use **Setup → Configure…**
 in the app. Changes made in the dialog take effect immediately without restarting.
@@ -204,6 +233,26 @@ in the app. Changes made in the dialog take effect immediately without restartin
 4. `_start()` is called automatically at the end of `__init__` — monitoring begins
    immediately without requiring the user to click a button.
 
+### Architecture — mixin classes
+
+`MainWindow` is composed from two mixins:
+
+- **`_PollMixin`** (`gui/_poll_mixin.py`) — everything related to the polling loop:
+  scheduling, the worker thread, the queue drain, and the result handler.
+- **`_TrayMixin`** (`gui/_tray_mixin.py`) — everything related to the system tray:
+  icon creation, hide/restore, menu callbacks.
+
+Both mixins access `self` attributes initialised in `MainWindow.__init__`, so they
+share state cleanly without any coupling between the files. `MainWindow` itself
+handles the UI layout, logging, export, setup dialog, and shutdown.
+
+### Score calculation (`utils.py`)
+
+A single `calculate_score(ok_count, total, response_times_ms)` function is the
+canonical implementation of the connectivity score. Both the poll result handler
+(`_poll_mixin.py`) and the Summary Score graph view (`graph_panel.py`) import and
+call this function, so the formula is defined in exactly one place.
+
 ### Polling cycle
 
 ```
@@ -212,7 +261,10 @@ tkinter after()  →  _fire_poll()  →  Thread: _poll_worker()
                          ┌──────────────────┘
                          │  for each provider × domain:
                          │      dns_checker.check_dns(server, domain)
-                         │  ip_tracker.get_public_ip_info()
+                         │  get_public_ip()          ← fast, every poll
+                         │  if IP changed:
+                         │      get_isp_for_ip(ip)   ← only on change
+                         │      _fetch_ipv6()
                          └──────────────────────────────────────────►  queue.put(result)
 
 tkinter after(200ms)  →  _queue_check()  →  _handle()
@@ -240,42 +292,50 @@ response returns `(True, response_time_ms)`.
 
 ### IP and ISP detection (`ip_tracker.py`)
 
-**IPv4** is fetched by trying four services in order:
+The IP and ISP lookups are **deliberately separated** to avoid rate-limiting on
+free-tier services:
+
+**Every poll — `get_public_ip()`**
+
+Hits only two lightweight services that have no practical rate limits and return
+only the IP address:
 
 | Service | Response format |
 |---|---|
-| `https://ipinfo.io/json` | JSON — includes IP, org/ISP |
-| `https://ipapi.co/json/` | JSON — includes IP, org/ISP |
 | `https://api.ipify.org?format=json` | JSON — IP only |
 | `https://checkip.amazonaws.com` | Plain text — IP only |
 
-The loop looks for the first service that returns **both** a valid IP and ISP
-data. If a service returns an IP but no ISP data (e.g. `ipinfo.io` responding
-with incomplete data under rate limiting), the IP is saved as a fallback and
-the next service is tried. The first service that returns an `org`/`isp` field
-wins; the ASN prefix (`"AS12345 …"`) is stripped so only the human-readable
-name is stored. "Unknown" is shown only when every service either failed or
-returned no ISP data — in that case the IP from the fallback is still reported.
-`get_public_ip_info()` returns `None` only when every service fails entirely
-(i.e. no internet connectivity at all), which triggers a failure event in the
-log.
+**Only when the IP changes — `get_isp_for_ip(ip)`**
 
-Requests to all four services are forced over IPv4 via a custom `HTTPAdapter`
-(`_ForceIPv4Adapter`) that pins `urllib3`'s address-family preference to
-`AF_INET` for the duration of the call. This ensures the service always echoes
-back the machine's IPv4 address rather than its IPv6 address on dual-stack
-connections.
+Queries ISP lookup services in order. Since an IP change happens at most a few
+times per day (failover events), these services are almost never called:
 
-**IPv6** is fetched separately by hitting `https://api6.ipify.org?format=json`,
-an endpoint that has only AAAA DNS records and therefore only responds over
-IPv6. If the machine has no IPv6 connectivity the connection fails silently and
-`None` is returned for the IPv6 field.
+| Service | Notes |
+|---|---|
+| `http://ip-api.com/json/{ip}` | Primary — 45 req/min free tier; returns `isp` and `org` fields directly |
+| `https://ipinfo.io/json` | Fallback — `org` field, ASN prefix stripped |
+| `https://ipapi.co/json/` | Fallback — `org` or `isp` field |
+
+The ASN prefix (e.g. `"AS7922 Comcast…"`) is stripped from `org`-style fields so
+only the human-readable name is stored and displayed.
+
+> **Why this matters:** at a 60-second polling interval the app makes ~1,440 calls
+> per day. Both `ipinfo.io` and `ipapi.co` have free-tier rate limits that this
+> volume exceeds, causing HTTP 429 responses and the ISP showing as `"Unknown"`.
+> The new design makes those services irrelevant during normal polling.
+
+All requests to IPv4 services are forced over IPv4 via a custom `HTTPAdapter`
+(`_ForceIPv4Adapter`) that pins `urllib3`'s address-family preference to `AF_INET`.
+This ensures the service always echoes back the machine's IPv4 address rather than
+its IPv6 address on dual-stack connections.
+
+**IPv6** is fetched separately via `_fetch_ipv6()`, which hits
+`https://api6.ipify.org?format=json` — an endpoint with only AAAA DNS records that
+therefore only responds over IPv6. A connection failure silently returns `None`.
 
 IPv4 and IPv6 are tracked **independently** — a new `ip_log` row is inserted
 whenever either address changes. This captures ISP failovers (IPv4 change) and
-IPv6 prefix rotations (IPv6-only change) as separate, timestamped events in the
-event log and database. When only IPv6 changes, the current IPv4 address is also
-written to the event log for context so both addresses are always visible together.
+IPv6 prefix rotations (IPv6-only change) as separate, timestamped events.
 
 ### Storage (`database.py`)
 
@@ -318,23 +378,22 @@ Indexed on `timestamp`.
 | `id` | INTEGER PK | Auto-increment. |
 | `timestamp` | REAL | Unix epoch when the failure was first detected. |
 
-One row is written each time a previously-working IP check transitions to failure
-(i.e. the first poll that returns `None` after a successful poll). Subsequent
-back-to-back failures within the same outage do not add rows. Recovery is recorded
-implicitly via the next `ip_log` row when the address is re-detected.
+One row is written each time a previously-working IP check transitions to failure.
+Subsequent back-to-back failures within the same outage do not add rows.
 Indexed on `timestamp`.
 
 #### Data retention
 
 All three tables are pruned automatically. On startup, and then once every 24 hours,
 `purge_old_records()` deletes all rows whose `timestamp` is older than 10 days.
-The database file itself is never deleted by the app.
 
 ### Configuration management (`config_manager.py`)
 
 `load_config()` reads `config.json` from the script directory. If the file is
-absent or unparseable, `DEFAULT_CONFIG` is returned (the same defaults shown in
-the *Configuration* section above). `save_config()` writes the dict back as
+absent or unparseable, `DEFAULT_CONFIG` is returned. If the file exists but is
+missing newer keys (e.g. `schema_version` was not present in older versions), those
+keys are **back-filled** from `DEFAULT_CONFIG` automatically without requiring the
+user to delete and recreate the file. `save_config()` writes the dict back as
 pretty-printed JSON.
 
 ### GUI structure (`gui/`)
@@ -363,6 +422,11 @@ Each entry is prefixed with a `[YYYY-MM-DD HH:MM:SS]` timestamp.
 Colour coding: green = all queries succeeded, red = all failed,
 blue = informational (IPv4 change, IPv6 change, config update, start/stop).
 
+When both the IP address and ISP change in the same poll, a single combined log
+entry is written (`"Public IP changed to X  (ISP: Old → New)"`) instead of two
+separate lines. If only one flag (`log_ip_success` or `log_isp_changes`) is
+enabled, separate lines are used for whichever flag is on.
+
 #### `SetupDialog` (setup_dialog.py)
 
 A modal `Toplevel` window with four notebook tabs:
@@ -372,34 +436,13 @@ A modal `Toplevel` window with four notebook tabs:
 - **Domains** — listbox of domains; Enter key or Add button appends; Remove
   deletes the selected entry.
 - **Settings** — `Spinbox` for the polling interval (10–3600 s).
-- **Event Log** — checkboxes that control what is written to the on-screen
-  Event Log and the optional log file:
-  - *Log DNS responses to event window* — when checked (default), DNS poll
-    summary lines are written to the Event Log. Unchecking suppresses all DNS
-    messages regardless of the sub-option below.
-    - *Only log incomplete DNS responses* — sub-option (disabled when the
-      parent is unchecked). When checked (default), the DNS summary line is
-      suppressed if every query succeeded; it is always shown when any query fails.
-  - *Log IP successful detection messages* — when checked (default), IP address
-    change and detection events appear in the Event Log; when unchecked, only IP
-    check failure messages are shown.
-  - *Log ISP changes to event window* — when checked (default), a dedicated
-    "ISP changed from X to Y" message is written to the Event Log whenever the
-    ISP name changes alongside an IP address change. Useful for dual-ISP setups
-    where you want a clear record of each failover event separate from the raw
-    IP change message.
-  - *Log score to event window* — when checked (default), the computed summary
-    score (0–100) is written to the Event Log after each poll, colour-coded green
-    (≥ 80), uncoloured (50–79), or red (< 50).
-    - *Only log scores below 80* — sub-option (disabled when the parent is
-      unchecked). When checked, score messages are suppressed unless the score
-      drops below 80.
-  - *Save Event Log* — when checked, every Event Log message is appended to
-    `event.log` in the app data directory (`%APPDATA%\InternetUptimeMonitor\` on
-    Windows). Unchecking immediately deletes the file.
+- **Event Log** — checkboxes controlling what is written to the on-screen Event Log
+  and the optional log file (see Configuration section for details).
 
-The dialog operates on a deep copy of the config dict; changes are only applied
-to the live config when **Save** is clicked. **Cancel** discards all edits.
+The **Save** button is disabled in real time whenever the provider list or domain
+list is empty, preventing a poll cycle with nothing to do. The dialog operates on a
+deep copy of the config dict; changes are only applied to the live config when
+**Save** is clicked. **Cancel** discards all edits.
 
 #### `GraphPanel` (graph_panel.py)
 
@@ -417,15 +460,15 @@ The controls bar contains three groups:
 | ISP combobox | Filter all graph views to a single ISP, or show All ISPs |
 
 The ISP list is populated from the `ip_log` table and refreshed on every
-`refresh()` call, so newly detected ISPs appear automatically. When a specific
-ISP is selected, each DNS result is matched against the `ip_log` transition
-history to determine which ISP was active at that timestamp; only matching
-results are plotted.
+`refresh()` call. The ISP filter uses `bisect` for O(log N) lookup of the active
+ISP at each DNS result's timestamp.
 
-`refresh()` is called automatically after every poll and whenever any control
-changes.
+The "By Provider" and "By Domain" views share a single `_plot_by_group()` method
+that accepts a `key_fn` argument — no duplicated plotting code.
 
-#### System tray (`main_window.py` — tray methods)
+`refresh()` is called automatically after every poll and whenever any control changes.
+
+#### System tray (`_tray_mixin.py`)
 
 When `pystray` and `Pillow` are installed the app gains system-tray support.
 Minimizing or clicking the window's X button calls `_hide_to_tray()`, which
@@ -441,7 +484,7 @@ its colour reflects the current monitoring state and connection quality:
 | Red | Monitoring — summary score < 50 (poor) |
 
 The score used for the icon is the same weighted formula as the Summary Score
-graph view and is recomputed after every poll.
+graph view (from `utils.calculate_score`) and is recomputed after every poll.
 
 ```
 minimize / close  →  _on_unmap() / _on_close()
@@ -461,10 +504,6 @@ double-click / "Show"  →  _tray_restore()  →  root.after(0, _restore_from_tr
 All pystray callbacks run in the pystray thread; any call that touches tkinter
 widgets is marshalled back to the main thread with `root.after(0, fn)`.
 
-The tray icon's tooltip and image are refreshed after every poll and every
-start/stop toggle via `_update_tray()`, so the tray always reflects the current
-monitoring state and last-check time.
-
 The tray right-click menu provides:
 
 | Item | Action |
@@ -479,17 +518,13 @@ three sections:
 
 - **DNS FAILURES** — the subset of DNS results where the query failed, with
   timestamp, provider, domain, and the IPv4, IPv6, and ISP active at that moment.
-- **IP CHECK FAILURES** — each moment the public IP lookup failed (transitions
-  from working to `None`), with the timestamp of when the failure was first
-  detected.
+- **IP CHECK FAILURES** — each moment the public IP lookup failed, with the
+  timestamp of when the failure was first detected.
 - **DNS RESULTS** — every DNS query with timestamp, provider, domain, response
-  time, success flag, and the IPv4, IPv6, and ISP active at that moment (resolved
-  from the `ip_log` transition history).
+  time, success flag, and the IPv4, IPv6, and ISP active at that moment.
 
-A confirmation entry is added to the Event Log on success.
-
-**File → Exit** also fully quits (bypasses the tray). If `pystray` is not
-installed the window falls back to normal minimize/close behaviour.
+**File → Exit** fully quits (bypasses the tray). If `pystray` is not installed
+the window falls back to normal minimize/close behaviour.
 
 ---
 
@@ -632,13 +667,13 @@ Check that the server IPs in your config are reachable — some corporate or
 home networks block outbound UDP/TCP port 53 to third-party resolvers. Try
 changing one provider to your router's IP (e.g. `192.168.1.1`).
 
-**IP always shows "Unknown" or never updates**
-The app tries four services in order: `ipinfo.io`, `ipapi.co`, `api.ipify.org`,
-and `checkip.amazonaws.com`. All four require outbound HTTPS access. If your
-network blocks all of them the IP display will not update, but DNS monitoring
-continues normally. The first two services provide ISP information; if both are
-blocked or return empty ISP data, the IP is still shown (from the latter two
-services) but the ISP field shows "Unknown".
+**ISP shows "Unknown"**
+The app uses `ip-api.com` as the primary ISP lookup service (called only when
+the IP changes, not every poll). If `ip-api.com` is unreachable, `ipinfo.io`
+and `ipapi.co` are tried as fallbacks. All three require outbound HTTP/HTTPS
+access. If your network blocks them, DNS monitoring continues normally but the
+ISP field will show "Unknown". Note: ISP lookup only fires on IP changes, so a
+fresh install may briefly show "Unknown" until the first poll completes.
 
 **High response times to all providers**
 This is expected if you are measuring from a busy or distant machine. The

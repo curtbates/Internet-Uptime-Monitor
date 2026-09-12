@@ -9,8 +9,8 @@ class SetupDialog:
     they clicked Save.
     """
 
-    def __init__(self, parent, config):
-        self.result = None  # stays None unless the user clicks Save
+    def __init__(self, parent: tk.Tk, config: dict) -> None:
+        self.result: dict | None = None  # stays None unless the user clicks Save
 
         # Deep-copy the relevant config sections so edits inside the dialog
         # don't affect the live config until the user explicitly saves.
@@ -65,12 +65,16 @@ class SetupDialog:
         # visible regardless of which tab is active.
         btn_frame = ttk.Frame(self.top)
         btn_frame.pack(fill=tk.X, padx=8, pady=(0, 8))
-        ttk.Button(btn_frame, text="Cancel", command=self.top.destroy).pack(side=tk.RIGHT, padx=4)
-        ttk.Button(btn_frame, text="Save",   command=self._save).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_frame, text="Cancel", command=self.top.destroy).pack(
+            side=tk.RIGHT, padx=4
+        )
+        self._save_btn = ttk.Button(btn_frame, text="Save", command=self._save)
+        self._save_btn.pack(side=tk.RIGHT, padx=4)
+        self._update_save_btn()     # set initial enabled/disabled state
 
     # ------------------------------------------------------------------ Providers tab
 
-    def _build_providers_tab(self, parent):
+    def _build_providers_tab(self, parent: ttk.Frame) -> None:
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
@@ -94,7 +98,9 @@ class SetupDialog:
         ttk.Entry(edit, textvariable=self._prov_name, width=24).grid(
             row=0, column=1, padx=4, pady=2, sticky=tk.W)
 
-        ttk.Label(edit, text="Server IP:").grid(row=1, column=0, sticky=tk.W, padx=4, pady=2)
+        ttk.Label(edit, text="Server IP:").grid(
+            row=1, column=0, sticky=tk.W, padx=4, pady=2
+        )
         self._prov_server = tk.StringVar()
         ttk.Entry(edit, textvariable=self._prov_server, width=24).grid(
             row=1, column=1, padx=4, pady=2, sticky=tk.W)
@@ -102,19 +108,24 @@ class SetupDialog:
         bf = ttk.Frame(parent)
         bf.pack(fill=tk.X, padx=8, pady=(0, 8))
         ttk.Button(bf, text="Add",    command=self._prov_add).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bf, text="Update", command=self._prov_update).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bf, text="Remove", command=self._prov_remove).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Update", command=self._prov_update).pack(
+            side=tk.LEFT, padx=2
+        )
+        ttk.Button(bf, text="Remove", command=self._prov_remove).pack(
+            side=tk.LEFT, padx=2
+        )
 
         self._prov_refresh()    # populate the listbox with the current providers
 
-    def _prov_refresh(self):
+    def _prov_refresh(self) -> None:
         # Rebuild the listbox from scratch. This is simpler than tracking
         # individual inserts/deletes and keeps the display in sync with self._cfg.
         self._prov_lb.delete(0, tk.END)
         for p in self._cfg["dns_providers"]:
             self._prov_lb.insert(tk.END, f"{p['name']}  ({p['server']})")
+        self._update_save_btn()
 
-    def _on_prov_select(self, _event=None):
+    def _on_prov_select(self, _event=None) -> None:
         # When the user clicks a row, copy its values into the edit fields so
         # they can modify and Update without retyping everything.
         sel = self._prov_lb.curselection()
@@ -123,17 +134,18 @@ class SetupDialog:
             self._prov_name.set(p["name"])
             self._prov_server.set(p["server"])
 
-    def _prov_add(self):
+    def _prov_add(self) -> None:
         name   = self._prov_name.get().strip()
         server = self._prov_server.get().strip()
         if not name or not server:
-            messagebox.showwarning("Input Error", "Enter both a name and a server IP.",
-                                   parent=self.top)
+            messagebox.showwarning(
+                "Input Error", "Enter both a name and a server IP.", parent=self.top
+            )
             return
         self._cfg["dns_providers"].append({"name": name, "server": server})
         self._prov_refresh()
 
-    def _prov_update(self):
+    def _prov_update(self) -> None:
         # Overwrite the selected entry in-place with whatever is in the edit fields.
         sel = self._prov_lb.curselection()
         if not sel:
@@ -144,7 +156,7 @@ class SetupDialog:
         }
         self._prov_refresh()
 
-    def _prov_remove(self):
+    def _prov_remove(self) -> None:
         sel = self._prov_lb.curselection()
         if not sel:
             return
@@ -153,7 +165,7 @@ class SetupDialog:
 
     # ------------------------------------------------------------------ Domains tab
 
-    def _build_domains_tab(self, parent):
+    def _build_domains_tab(self, parent: ttk.Frame) -> None:
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
@@ -174,16 +186,19 @@ class SetupDialog:
         # needing to click the Add button.
         entry.bind("<Return>", lambda _: self._dom_add())
         ttk.Button(ef, text="Add",    command=self._dom_add).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ef, text="Remove", command=self._dom_remove).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ef, text="Remove", command=self._dom_remove).pack(
+            side=tk.LEFT, padx=2
+        )
 
         self._dom_refresh()
 
-    def _dom_refresh(self):
+    def _dom_refresh(self) -> None:
         self._dom_lb.delete(0, tk.END)
         for d in self._cfg["domains"]:
             self._dom_lb.insert(tk.END, d)
+        self._update_save_btn()
 
-    def _dom_add(self):
+    def _dom_add(self) -> None:
         # Normalise to lowercase so "Google.com" and "google.com" aren't treated
         # as two different domains.
         domain = self._dom_entry.get().strip().lower()
@@ -196,7 +211,7 @@ class SetupDialog:
             self._dom_refresh()
         self._dom_entry.set("")     # clear the entry field ready for the next domain
 
-    def _dom_remove(self):
+    def _dom_remove(self) -> None:
         sel = self._dom_lb.curselection()
         if not sel:
             return
@@ -205,7 +220,7 @@ class SetupDialog:
 
     # ------------------------------------------------------------------ Settings tab
 
-    def _build_settings_tab(self, parent):
+    def _build_settings_tab(self, parent: ttk.Frame) -> None:
         f = ttk.Frame(parent, padding="24 24")
         f.pack(fill=tk.BOTH, expand=True)
 
@@ -214,16 +229,19 @@ class SetupDialog:
 
         # Spinbox enforces the numeric range visually; _save() validates it again
         # in case the user types a value directly into the field.
-        self._interval_var = tk.StringVar(value=str(self._cfg["polling_interval_seconds"]))
-        ttk.Spinbox(f, textvariable=self._interval_var, from_=10, to=3600, width=8).grid(
-            row=0, column=1, padx=12, sticky=tk.W)
+        self._interval_var = tk.StringVar(
+            value=str(self._cfg["polling_interval_seconds"])
+        )
+        ttk.Spinbox(
+            f, textvariable=self._interval_var, from_=10, to=3600, width=8
+        ).grid(row=0, column=1, padx=12, sticky=tk.W)
 
         ttk.Label(f, text="min 10 s, max 3600 s", foreground="gray").grid(
             row=1, column=1, sticky=tk.W, padx=12)
 
     # ------------------------------------------------------------------ Event Log tab
 
-    def _build_event_log_tab(self, parent):
+    def _build_event_log_tab(self, parent: ttk.Frame) -> None:
         f = ttk.Frame(parent, padding="24 24")
         f.pack(fill=tk.BOTH, expand=True)
 
@@ -243,7 +261,9 @@ class SetupDialog:
             text="Only log incomplete DNS responses",
             variable=self._log_only_incomplete_var,
         )
-        self._log_only_incomplete_cb.grid(row=1, column=0, sticky=tk.W, pady=4, padx=(24, 0))
+        self._log_only_incomplete_cb.grid(
+            row=1, column=0, sticky=tk.W, pady=4, padx=(24, 0)
+        )
         self._on_log_dns_toggle()  # set initial enabled/disabled state
 
         self._log_ip_success_var = tk.BooleanVar(value=self._cfg["log_ip_success"])
@@ -268,13 +288,17 @@ class SetupDialog:
             command=self._on_log_score_toggle,
         ).grid(row=4, column=0, sticky=tk.W, pady=8)
 
-        self._log_score_below_80_var = tk.BooleanVar(value=self._cfg["log_score_below_80_only"])
+        self._log_score_below_80_var = tk.BooleanVar(
+            value=self._cfg["log_score_below_80_only"]
+        )
         self._log_score_below_80_cb = ttk.Checkbutton(
             f,
             text="Only log scores below 80",
             variable=self._log_score_below_80_var,
         )
-        self._log_score_below_80_cb.grid(row=5, column=0, sticky=tk.W, pady=4, padx=(24, 0))
+        self._log_score_below_80_cb.grid(
+            row=5, column=0, sticky=tk.W, pady=4, padx=(24, 0)
+        )
         self._on_log_score_toggle()  # set initial enabled/disabled state
 
         self._save_event_log_var = tk.BooleanVar(value=self._cfg["save_event_log"])
@@ -284,17 +308,22 @@ class SetupDialog:
             variable=self._save_event_log_var,
         ).grid(row=6, column=0, sticky=tk.W, pady=8)
 
-    def _on_log_dns_toggle(self):
+    def _on_log_dns_toggle(self) -> None:
         state = tk.NORMAL if self._log_dns_var.get() else tk.DISABLED
         self._log_only_incomplete_cb.configure(state=state)
 
-    def _on_log_score_toggle(self):
+    def _on_log_score_toggle(self) -> None:
         state = tk.NORMAL if self._log_score_var.get() else tk.DISABLED
         self._log_score_below_80_cb.configure(state=state)
 
     # ------------------------------------------------------------------
 
-    def _save(self):
+    def _update_save_btn(self) -> None:
+        """Enable Save only when there is at least one provider and one domain."""
+        ok = bool(self._cfg["dns_providers"]) and bool(self._cfg["domains"])
+        self._save_btn.configure(state=tk.NORMAL if ok else tk.DISABLED)
+
+    def _save(self) -> None:
         # Validate the interval before accepting the save. The Spinbox widget
         # can still receive arbitrary typed input, so we must re-check here.
         try:
@@ -302,23 +331,25 @@ class SetupDialog:
             if not 10 <= interval <= 3600:
                 raise ValueError
         except ValueError:
-            messagebox.showwarning("Input Error",
-                                   "Interval must be between 10 and 3600 seconds.",
-                                   parent=self.top)
+            messagebox.showwarning(
+                "Input Error",
+                "Interval must be between 10 and 3600 seconds.",
+                parent=self.top,
+            )
             return
 
-        # Require at least one provider and one domain so a poll cycle always
-        # has something to do.
+        # Guard is redundant when the Save button is disabled, but kept as a
+        # safety net in case _update_save_btn() is ever skipped.
         if not self._cfg["dns_providers"]:
-            messagebox.showwarning("Input Error",
-                                   "At least one DNS provider is required.",
-                                   parent=self.top)
+            messagebox.showwarning(
+                "Input Error", "At least one DNS provider is required.", parent=self.top
+            )
             return
 
         if not self._cfg["domains"]:
-            messagebox.showwarning("Input Error",
-                                   "At least one domain is required.",
-                                   parent=self.top)
+            messagebox.showwarning(
+                "Input Error", "At least one domain is required.", parent=self.top
+            )
             return
 
         self._cfg["polling_interval_seconds"] = interval

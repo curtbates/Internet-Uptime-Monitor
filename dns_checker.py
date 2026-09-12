@@ -3,7 +3,9 @@ import dns.resolver
 import dns.exception
 
 
-def check_dns(server_ip, domain, timeout=5.0):
+def check_dns(
+    server_ip: str, domain: str, timeout: float = 5.0
+) -> tuple[bool, float | None]:
     """Query `domain` against `server_ip`. Returns (success, response_time_ms).
 
     response_time_ms is None when success is False.
@@ -32,9 +34,16 @@ def check_dns(server_ip, domain, timeout=5.0):
         resolver.resolve(domain, "A")
         elapsed_ms = (time.perf_counter() - start) * 1000
         return True, round(elapsed_ms, 2)
+    except (
+        dns.exception.Timeout,
+        dns.resolver.NXDOMAIN,
+        dns.resolver.NoAnswer,
+        dns.resolver.NoNameservers,
+        OSError,
+    ):
+        # Expected network failures: timeout, unreachable server, unknown domain.
+        return False, None
     except Exception:
-        # Catch-all covers: dns.exception.Timeout, dns.resolver.NXDOMAIN,
-        # dns.resolver.NoAnswer, dns.resolver.NoNameservers, OSError, etc.
-        # We don't distinguish between failure modes here — any exception means
-        # the lookup failed from the user's perspective.
+        # Unexpected dnspython or OS error — still a failure from the user's
+        # perspective, but log it if debug tooling is ever added.
         return False, None

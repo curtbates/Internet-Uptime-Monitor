@@ -6,14 +6,24 @@ PROJECT STRUCTURE
 
     main.py                  — entry point (terminal)
     main.pyw                 — entry point (no console window; errors via messagebox)
+    version.py               — single source of truth: __version__ = "20260912a"
+    utils.py                 — shared helpers (calculate_score)
     config_manager.py        — load/save config.json
     database.py              — SQLite helpers
     dns_checker.py           — DNS query logic
-    ip_tracker.py            — public IP / ISP lookup
+    ip_tracker.py            — public IP / ISP lookup (split: fast check vs. ISP lookup)
     gui/__init__.py          — empty
-    gui/main_window.py       — main window, monitoring loop, tray
+    gui/main_window.py       — main window; composes _PollMixin and _TrayMixin
+    gui/_poll_mixin.py       — polling loop: worker thread, queue drain, result handler
+    gui/_tray_mixin.py       — system tray: icon, hide/restore, menu
     gui/graph_panel.py       — matplotlib graph widget
     gui/setup_dialog.py      — modal setup dialog
+    tests/conftest.py        — pytest fixture: redirects DB to temp directory
+    tests/test_utils.py      — calculate_score() tests
+    tests/test_database.py   — database CRUD and purge tests
+    tests/test_config.py     — config load/save/back-fill tests
+    tests/test_ip_tracker.py — _is_valid_ipv4() tests
+    tests/test_graph_panel.py — bucket helper tests
 
 main.pyw is identical to main.py in behaviour. On Windows, pythonw (invoked
 automatically for .pyw files) runs without a console window. If a required
@@ -28,12 +38,34 @@ DEPENDENCIES
     matplotlib     — embedded graph
     pystray        — system tray (optional, graceful degradation if missing)
     Pillow         — tray icon image (optional, same as pystray)
+    pytest         — test suite (optional, not needed to run the app)
+
+---
+
+VERSION
+
+Define __version__ in version.py only. Import it in gui/main_window.py for the
+window title and About dialog. Never hardcode the version string elsewhere.
+
+---
+
+SCORE FORMULA (utils.py)
+
+Define calculate_score(ok_count, total, response_times_ms) -> float in utils.py.
+Import and call it from both _poll_mixin.py (live poll handler) and graph_panel.py
+(Summary Score view). Never duplicate the formula.
+
+    success_rate = ok_count / total if total else 0.0
+    rt_score     = max(0.0, min(1.0, 1.0 - (avg_rt - 20) / 480))
+                   (20 ms → 1.0,  500 ms → 0.0; 0.0 when no successful responses)
+    score        = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
 
 ---
 
 CONFIG (config.json, stored next to the scripts)
 
 Defaults if file is missing or corrupt:
+    schema_version: 1
     polling_interval_seconds: 60
     log_dns: true
     log_only_incomplete_dns: true
@@ -51,64 +83,58 @@ Defaults if file is missing or corrupt:
     ]
     domains: ["google.com", "amazon.com", "cloudflare.com", "microsoft.com", "github.com"]
 
+load_config() must back-fill any keys missing from an older config file using
+DEFAULT_CONFIG.setdefault() so upgrades never require manual file edits.
+
 log_dns (bool, default true):
     When true, DNS poll summary lines are written to the Event Log.
     When false, all DNS poll messages are suppressed regardless of
     log_only_incomplete_dns.
 
 log_only_incomplete_dns (bool, default true):
-    Effective only when log_dns is true.
-    When true, the per-poll DNS summary line is written to the Event Log only when
-    at least one query failed (ok_count < total). When false, the summary line is
-    written after every poll regardless of outcome.
+    Effective only when log_dns is true. When true, the per-poll DNS summary line
+    is written only when at least one query failed. When false, written every poll.
 
 log_score (bool, default true):
     When true, the computed summary score (0–100) is written to the Event Log after
-    each poll, colour-coded with the "ok" tag (green) when score >= 80, the "fail"
-    tag (red) when score < 50, and no tag otherwise.
+    each poll, colour-coded: "ok" tag (green) when score >= 80, "fail" tag (red)
+    when score < 50, no tag otherwise.
 
 log_score_below_80_only (bool, default false):
-    Effective only when log_score is true.
-    When true, score messages are suppressed unless the score is below 80.
+    Effective only when log_score is true. When true, score messages are suppressed
+    unless the score is below 80.
 
 save_event_log (bool, default false):
-    When true, every message passed to _log_event() is appended to event.log in the
-    app data directory (same folder as uptime_monitor.db). When the user saves the
-    dialog with this value false, delete event.log if it exists.
-
-    Event log file path:
-        Windows   %APPDATA%\InternetUptimeMonitor\event.log
-        Linux     ~/.InternetUptimeMonitor/event.log
-
-    Use open(APP_DIR / "event.log", "a", encoding="utf-8") and silently swallow
-    OSError so a permissions problem cannot crash the app.
+    When true, every message passed to _log_event() is appended to event.log in
+    APP_DIR. When false (or when the user saves the dialog with this false), delete
+    event.log if it exists.
 
 log_ip_success (bool, default true):
     When true, IP address change and detection messages are written to the Event Log.
-    When false, only the IP check failure message is logged. The database inserts
-    (insert_ip_log, insert_ip_failure) and _last_ip / _last_ipv6 state updates are
-    unaffected by this setting.
+    When false, only the IP check failure message is logged. Database inserts and
+    _last_ip / _last_ipv6 state updates are unaffected.
 
 log_isp_changes (bool, default true):
-    When true, a dedicated "ISP changed from X to Y" message (with "info" tag) is
-    written to the Event Log whenever the detected ISP name differs from the
-    previously recorded ISP name on an IPv4 change event. When false, ISP transitions
-    are still recorded in the database (via insert_ip_log) but no extra event log
-    message is generated. The _last_isp state update is unaffected by this setting.
+    When true and both the IP and ISP changed in the same poll, combine them into
+    one log entry: "Public IP changed to X  (ISP: Old → New)".
+    When both log_ip_success and log_isp_changes are true and the ISP changed,
+    use the combined message instead of two separate lines.
+    When only log_isp_changes is true (log_ip_success false), write only the ISP
+    change message.
+    When only log_ip_success is true (log_isp_changes false), write only the IP
+    change message with the new ISP in parentheses.
+    _last_isp is always updated regardless of this flag.
 
 ---
 
 DATABASE
 
-Store the database in a platform-specific application data directory so it is
-never inside a cloud-sync folder (Google Drive, OneDrive, etc.):
+Store the database in a platform-specific application data directory:
     Windows   %APPDATA%\InternetUptimeMonitor\uptime_monitor.db
     Linux     ~/.InternetUptimeMonitor/uptime_monitor.db
 
-Create the directory with parents=True, exist_ok=True on module import using
-pathlib and os.environ.get("APPDATA", Path.home()). Expose the directory as the
-module-level constant APP_DIR (no leading underscore) so other modules can import
-it to locate sibling files such as event.log.
+Expose the directory as the module-level constant APP_DIR so other modules can
+import it to locate sibling files such as event.log.
 
 Table dns_results:
     id               INTEGER PRIMARY KEY AUTOINCREMENT
@@ -134,8 +160,8 @@ One ip_failures row is written each time a working IP check transitions to
 failure (i.e. the first poll that returns None after a successful poll).
 Back-to-back failures within the same outage do not add additional rows.
 
-Index timestamp on all three tables. Purge records older than 10 days across
-all three tables; run purge once at startup and re-schedule every 24 hours.
+Index timestamp on all three tables. Purge records older than 10 days; run once
+at startup and re-schedule every 24 hours.
 
 Schema migration: initialize_db() must handle databases created before
 public_ipv6 was added. After the CREATE TABLE IF NOT EXISTS block, check
@@ -146,77 +172,136 @@ PRAGMA table_info(ip_log); if public_ipv6 is absent, run:
 
 DNS CHECKER (dns_checker.py)
 
-Function: check_dns(server_ip, domain, timeout=5.0) -> (bool, float | None)
+Function: check_dns(server_ip, domain, timeout=5.0) -> tuple[bool, float | None]
 
 Use dnspython with configure=False (ignore system resolver). Set both lifetime
 and timeout to the timeout value to disable implicit retries. Query an A record.
-Measure elapsed time with time.perf_counter(). Return (True, elapsed_ms) on
-success or (False, None) on any exception.
+Measure elapsed time with time.perf_counter(). Catch specific expected exceptions
+(dns.exception.Timeout, NXDOMAIN, NoAnswer, NoNameservers, OSError) and return
+(False, None). A bare except Exception is acceptable as a final catch-all but
+should also return (False, None). Return (True, elapsed_ms) on success.
 
 ---
 
 IP TRACKER (ip_tracker.py)
 
-IPv4 fetch
-----------
-Function: get_public_ip_info(timeout=10) -> dict | None
-Returns {"ip": str, "ipv6": str | None, "isp": str, "org": str} or None if all
-services fail.
+IMPORTANT: Split the IP check and ISP lookup into two separate functions. Free-tier
+ISP services (ipinfo.io, ipapi.co) have rate limits that a 60-second polling
+interval will exceed (~1,440 req/day), causing HTTP 429 responses and "Unknown"
+ISP. The fix is to call the cheap IP-only services every poll and the ISP services
+only when the IP actually changes.
 
-On dual-stack hosts, requests may connect to ipinfo.io over IPv6, causing the
-service to echo back the IPv6 address as "ip" rather than the IPv4 address.
+IP validation
+-------------
+_is_valid_ipv4(addr: str) -> bool
+Compile _IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$") at module level.
+Use it to reject HTML error pages or other non-IP strings before storing them.
+
+Fast IP fetch (called every poll)
+----------------------------------
+Function: get_public_ip(timeout=10) -> str | None
+
+Try these services in order via _ipv4_session:
+  1. https://api.ipify.org?format=json  — JSON; "ip" field
+  2. https://checkip.amazonaws.com      — plain text; entire body is the IP
+
+For each, attempt resp.json() first; catch ValueError and use resp.text.strip().
+Validate with _is_valid_ipv4() before returning. Return None if all fail.
+
+ISP lookup (called only when IP changes)
+-----------------------------------------
+Function: get_isp_for_ip(ip: str, timeout=10) -> tuple[str, str]
+Returns (isp_name, org_raw). Falls back to ("Unknown", "") if all services fail.
+
+Try these services in order via _ipv4_session:
+  1. http://ip-api.com/json/{ip}?fields=status,isp,org,query
+     — JSON; check data["status"] == "success"; use data["isp"] or data["org"]
+     — Note: HTTP only on the free tier
+  2. https://ipinfo.io/json     — JSON; "org" field contains "AS1234 ISP Name"
+  3. https://ipapi.co/json/     — JSON; "org" or "isp" field
+
+For ipinfo.io / ipapi.co style responses:
+    org = data.get("org", "") or data.get("isp", "") or ""
+    if org.startswith("AS"):
+        isp = org.split(" ", 1)[1] if " " in org else org
+    else:
+        isp = org
+
+IPv4 dual-stack prevention
+---------------------------
+On dual-stack hosts, requests may route to ipinfo.io over IPv6, causing the
+service to echo back the IPv6 address instead of the IPv4 address.
 Prevent this with a custom HTTPAdapter subclass (_ForceIPv4Adapter) that
 temporarily sets urllib3.util.connection.allowed_gai_family to return
-socket.AF_INET for the duration of every send() call, then restores the
-original. Mount this adapter on a module-level requests.Session (_ipv4_session)
-for both "https://" and "http://", and use _ipv4_session.get() for all IPv4
-service calls.
-
-Try these services in order via _ipv4_session, falling through on any exception:
-  1. https://ipinfo.io/json            — JSON; ip field = "ip", org field = "org"
-  2. https://ipapi.co/json/            — JSON; ip field = "ip", org field = "org" or "isp"
-  3. https://api.ipify.org?format=json — JSON; ip field = "ip", no org field
-  4. https://checkip.amazonaws.com     — plain text; entire response body is the IP
-
-For each service, attempt resp.json() first to extract ip and org/isp. Catch
-ValueError (plain text response) and fall back to resp.text.strip() as the IP
-with data = {}.
-
-After extracting the IP, check for ISP data:
-    org = data.get("org", "") or data.get("isp", "") or ""
-
-If org is empty (services 3 and 4 never provide one; services 1 or 2 may omit
-it under rate limiting), save the IP as fallback_ip (only the first such IP
-is kept) and continue to the next service. Do NOT return "Unknown" immediately.
-
-If org is non-empty, strip the leading ASN token (e.g. "AS7922 Comcast...") and
-use the remainder as the displayed ISP name; store the raw org string separately.
-Return immediately with this result.
-
-After the loop:
-  - If any service returned both IP and org, it was already returned above.
-  - If at least one service returned an IP but none provided org data, return
-    {"ip": fallback_ip, "ipv6": ..., "isp": "Unknown", "org": ""}.
-  - Only return None when every service failed to return any usable IP.
+socket.AF_INET. Mount it on a module-level Session (_ipv4_session) for both
+"https://" and "http://". Use _ipv4_session.get() for all IP/ISP service calls.
 
 IPv6 fetch
 ----------
 Function: _fetch_ipv6(timeout=5) -> str | None
-
 Use plain requests.get() (not _ipv4_session) to hit:
     https://api6.ipify.org?format=json
-This endpoint has only AAAA DNS records, so the OS must use IPv6 to reach it.
-Return the "ip" field from the JSON response, or None on any exception
-(including connection failure, which simply means the host has no IPv6).
+This endpoint has only AAAA DNS records so only IPv6 hosts can reach it.
+Return the "ip" field, or None on any exception.
 
-Call _fetch_ipv6() inside get_public_ip_info() after a successful IPv4 response
-and include the result as "ipv6" in the returned dict.
+Compatibility shim
+------------------
+Function: get_public_ip_info(timeout=10) -> dict | None
+Returns {"ip": str, "ipv6": str|None, "isp": str, "org": str} or None.
+Calls get_public_ip(), then get_isp_for_ip(), then _fetch_ipv6().
+Used only on the first poll or when a full combined result is needed.
+
+---
+
+POLL MIXIN (gui/_poll_mixin.py)
+
+Mixin class _PollMixin. Methods access self attributes set by MainWindow.__init__.
+
+In _poll_worker() (runs in daemon thread — no tkinter access):
+  1. Run check_dns() for each provider × domain combination.
+  2. Call get_public_ip() — fast, no rate-limit concern, every poll.
+  3. If ip != self._last_ip: call get_isp_for_ip(ip) and _fetch_ipv6() to
+     get fresh ISP data and IPv6. Build ip_info dict with all four fields.
+  4. Else (IP unchanged): reuse self._last_isp; still call _fetch_ipv6() to
+     detect IPv6 changes. Set ip_info["isp"] = self._last_isp or "Unknown".
+  5. If get_public_ip() returned None: set ip_info = None.
+  6. queue.put(("done", ts, dns_results, ip_info))
+
+In _handle() (main thread):
+  - Insert all DNS results to DB.
+  - IP/ISP/IPv6 change detection and logging (see CONFIG section above for
+    combined log message logic).
+  - Compute score with calculate_score() from utils.py; store as _last_score.
+  - Log DNS poll summary and score per config flags.
+  - Update status bar labels, refresh graph, update tray, schedule next poll.
+
+---
+
+TRAY MIXIN (gui/_tray_mixin.py)
+
+Mixin class _TrayMixin. Import pystray, Pillow at module level inside a
+try/except; export TRAY_AVAILABLE = True/False. MainWindow imports TRAY_AVAILABLE
+from _tray_mixin to decide whether to bind <Unmap> and use tray on close.
+
+Methods: _make_icon_image, _make_tray_icon, _on_unmap, _hide_to_tray,
+         _tray_restore, _restore_from_tray, _update_tray, _tray_quit.
+
+Tray icon: 64×64 RGBA filled circle with white 3px outline.
+  Blue   (#2980b9) — not monitoring
+  Green  (#27ae60) — monitoring, score > 80 or no score yet
+  Yellow (#f39c12) — monitoring, score 50–80
+  Red    (#c0392b) — monitoring, score < 50
+
+All pystray callbacks marshal to the main thread via root.after(0, fn).
 
 ---
 
 MAIN WINDOW (gui/main_window.py)
 
-Window title: "Internet Uptime Monitor - by Curt Bates - v20260626a"
+class MainWindow(_PollMixin, _TrayMixin)
+
+Window title: f"Internet Uptime Monitor - by Curt Bates - v{__version__}"
+  (import __version__ from version.py)
 Initial size: 1050x720, minimum: 800x580
 
 Layout (top to bottom, using pack):
@@ -231,7 +316,7 @@ MENU BAR
   Setup > Configure…            — opens the Setup dialog
   Help > About                  — custom Toplevel dialog, centered on main window,
                                    not resizable, modal; shows app name, author,
-                                   version (20260626a), description text, OK button
+                                   version (from __version__), description, OK button
 
 STATUS BAR
   Left to right, separated by vertical separators:
@@ -243,9 +328,8 @@ STATUS BAR
   Right-aligned:
     "Next: HH:MM:SS" (shown while monitoring is active)
 
-Pre-populate IP/ISP on startup from the most recent ip_log record (so the user
-sees the last-known IP immediately without waiting for the first poll). Also
-seed _last_ipv6 from the same record's public_ipv6 field.
+Pre-populate IP/ISP on startup from the most recent ip_log record. Also seed
+_last_ipv6 from the same record's public_ipv6 field.
 
 CONTENT AREA
   Top portion: GraphPanel widget (fills remaining space, expandable)
@@ -255,248 +339,165 @@ CONTENT AREA
     Named colour tags:
       "ok"   → #27ae60 (green)  — all DNS lookups succeeded
       "fail" → #c0392b (red)    — all DNS lookups failed
-      "info" → #2980b9 (blue)   — informational (start, stop, IPv4 change,
-                                   IPv6 change, config update)
+      "info" → #2980b9 (blue)   — informational (start, stop, IP/ISP change,
+                                   config update)
     No tag (default colour) when some but not all lookups failed.
 
 _log_event(msg, tag):
-  Inserts "[YYYY-MM-DD HH:MM:SS] msg\n" into the Text widget with the given tag.
-  If config.get("save_event_log", False) is true, also appends the same line
-  to APP_DIR / "event.log" (open in "a", encoding="utf-8"). Silently swallow
-  OSError so a file-system problem cannot crash the app.
-
-_open_setup (Setup > Configure… handler):
-  After the user saves the dialog, if config.get("save_event_log", False) is
-  false, delete APP_DIR / "event.log" if it exists (Path.unlink()).
+  Inserts "[YYYY-MM-DD HH:MM:SS] msg\n" into the Text widget.
+  If save_event_log is true, appends to APP_DIR / "event.log" (open "a",
+  encoding="utf-8"). Silently swallow OSError.
 
 BOTTOM BAR
   "▶  Start Monitoring" / "■  Stop Monitoring" toggle button (left)
   "Interval: N s" label in gray (left, next to button)
 
-MONITORING LOOP
-  - Use root.after() to schedule polls; run actual DNS + IP work in a daemon thread.
-  - Use a queue.Queue to pass results from the worker thread back to the main thread.
-  - Drain the queue every 200 ms with root.after(200, _queue_check).
-  - Track _last_ip (IPv4), _last_ipv6, and _last_isp separately in MainWindow.__init__.
-    Pre-populate all three from the most recent ip_log record on startup.
-  - On each completed poll cycle:
-      • Write all DNS results to the database.
-      • If ip_info is not None:
-          - ip_changed   = ip != _last_ip
-          - ipv6_changed = ipv6 is not None and ipv6 != _last_ipv6
-            (treat a None IPv6 result as a transient fetch failure, not a change,
-             to avoid spurious "lost IPv6" events)
-          - If ip_changed OR ipv6_changed: insert one ip_log row with current
-            IPv4, IPv6, ISP.
-          - If ip_changed:
-              • If _last_isp is not None and isp != _last_isp and log_isp_changes:
-                log "ISP changed from <_last_isp> to <isp>" with "info" tag.
-              • Update _last_isp = isp always (regardless of logging flag).
-              • If log_ip_success, log "Public IP changed to / detected as X  (ISP)"
-                with "info" tag.
-              • Update _last_ip always (regardless of logging flag).
-          - If ipv6_changed and NOT ip_changed: if log_ip_success, log "Public IP: X  (ISP)"
-            with "info" tag (current IPv4 for context alongside the IPv6 event).
-          - If ipv6_changed: if log_ip_success, log "Public IPv6 changed to / detected as X  (ISP)"
-            with "info" tag; update _last_ipv6 always (regardless of logging flag).
-            (log_ip_success  = config.get("log_ip_success", True))
-            (log_isp_changes = config.get("log_isp_changes", True))
-      • If ip_info is None and _last_ip is not None: log the failure once with
-        "fail" tag; call insert_ip_failure(ts) to persist the event; reset both
-        _last_ip and _last_ipv6 to None so the next successful poll re-logs
-        both addresses even if unchanged.
-      • Compute the summary score (see Score Formula below) and store as _last_score.
-      • Log a DNS poll summary line: "DNS poll: N/T succeeded[, avg X.X ms]"
-        with ok/fail/no-tag colouring as described above, but only when
-        log_dns is true AND (log_only_incomplete_dns is false OR ok_count < total).
-        (log_dns = config.get("log_dns", True))
-        (log_only_incomplete_dns = config.get("log_only_incomplete_dns", True))
-      • If log_score is true and (log_score_below_80_only is false OR score < 80):
-        log "Score: X.X/100" with "ok" tag when score >= 80, "fail" tag when
-        score < 50, no tag otherwise.
-        (log_score = config.get("log_score", True))
-        (log_score_below_80_only = config.get("log_score_below_80_only", False))
-      • Update "Last check" and "Next" labels in the status bar.
-      • Refresh the graph panel.
-      • Update the tray icon.
-      • Schedule the next poll using the configured interval.
+MONITORING LOOP (implemented in _PollMixin)
+  - Schedule polls with root.after(); worker in daemon thread.
+  - queue.Queue between worker and main thread; drain every 200 ms.
+  - Track _last_ip, _last_ipv6, _last_isp, _last_score in __init__.
   - Start monitoring automatically when the application launches.
 
-SCORE FORMULA (used both in the live poll handler and the graph panel)
-  success_rate = successful_lookups / total_lookups   (0.0–1.0)
-  rt_score     = clamp(1.0 - (avg_response_time_ms - 20) / 480, 0.0, 1.0)
-                 (20 ms → 1.0,  500 ms → 0.0)
-  score        = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
-
 EXPORT LOG (File > Export to Log File…)
-  Ask for a save path (default filename: uptime_log_YYYYMMDD_HHMMSS.txt).
-  Write a header (title + generated timestamp), then three sections:
-
-  Section 1 — DNS FAILURES
-    The subset of dns_results rows where success = 0. Columns: timestamp,
-    provider, domain, IPv4, IPv6, ISP. Response time and OK? are omitted.
-
-  Section 2 — IP CHECK FAILURES
-    Every ip_failures row. Single column: Timestamp.
-
-  Section 3 — DNS RESULTS
-    Every dns_results row. Columns: timestamp, provider, domain, response time,
-    success flag ("yes"/"no"), IPv4, IPv6, ISP. Determine the active IP/ISP by
-    walking the ip_log rows (sorted ascending) and finding the last transition
-    whose timestamp <= the DNS row's timestamp.
-
-  For all sections: format timestamps as "YYYY-MM-DD HH:MM:SS"; show "—" for
-  missing IPv6 or unknown fields; write "  (no records)" when a section is empty.
-
-  Column order and widths for DNS RESULTS / DNS FAILURES:
-    Timestamp  22  Provider  10  Domain  22  [RT(ms)  8 right  OK?  3 — RESULTS only]
-    IPv4  17  IPv6  39  ISP  (no fixed width, last column)
+  Ask for a save path (default: uptime_log_YYYYMMDD_HHMMSS.txt).
+  Three sections: DNS FAILURES, IP CHECK FAILURES, DNS RESULTS.
+  Active IP/ISP determined by walking ip_log rows ascending and finding the last
+  transition whose timestamp <= the DNS row's timestamp.
+  Format timestamps as "YYYY-MM-DD HH:MM:SS". Show "—" for missing IPv6.
+  Write "  (no records)" when a section is empty.
 
 ---
 
 GRAPH PANEL (gui/graph_panel.py)
 
-Embed a matplotlib Figure (9×4 inches, 100 dpi) with a NavigationToolbar2Tk below it.
-Use the TkAgg backend. Use tight_layout() and autofmt_xdate(rotation=30) after each draw.
+Embed a matplotlib Figure (9×4 inches, 100 dpi). Use TkAgg backend. Use
+tight_layout() and autofmt_xdate(rotation=30) after each draw.
 
-CONTROLS ROW (above the graph):
-  "View:" label + radio buttons: By Provider | By Domain | Summary Score
+CONTROLS ROW:
+  "View:" + radio buttons: By Provider | By Domain | Summary Score
   Vertical separator
-  "Range:" label + readonly Combobox: Last 1h | Last 6h | Last 24h | Last 7d
+  "Range:" + readonly Combobox: Last 1h | Last 6h | Last 24h | Last 7d
   "Refresh" button
   Vertical separator
-  "ISP:" label + readonly Combobox (populated from distinct ISP names in ip_log,
-    plus "All ISPs" as the first option); filters results to only records that
-    occurred while the selected ISP was active (determined by walking ip_log
-    transitions backward)
+  "ISP:" + readonly Combobox (from get_distinct_isps() + "All ISPs")
 
 TIME RANGES AND BUCKET SIZES:
-  Last 1h  →  60 s buckets  (up to 60 data points)
-  Last 6h  → 300 s buckets  (up to 72 data points)
-  Last 24h → 900 s buckets  (up to 96 data points)
-  Last 7d  → 3600 s buckets (up to 168 data points)
+  Last 1h  →  60 s buckets
+  Last 6h  → 300 s buckets
+  Last 24h → 900 s buckets
+  Last 7d  → 3600 s buckets
 
-Bucket a timestamp: int(timestamp / bucket_s) * bucket_s  (floor to bucket boundary)
+Bucket formula: int(timestamp / bucket_s) * bucket_s
+
+ISP FILTER:
+  When an ISP is selected, use bisect to find the active ISP at each DNS
+  result's timestamp in O(log N). Build two parallel lists from ip_log:
+  timestamps and isp_names. Use bisect.bisect_right(timestamps, r["timestamp"]) - 1
+  to find the index, then check isp_names[idx].
+
+SHARED PLOT METHOD:
+  _plot_by_group(results, bucket_s, key_fn, title) handles both "By Provider"
+  and "By Domain" views. key_fn is lambda r: r["dns_provider"] or
+  lambda r: r["domain"]. Do not duplicate the plotting loop.
 
 BY PROVIDER VIEW
-  One line per DNS provider. For each time bucket, average the response times of
-  all successful queries for that provider. Plot with marker="o", markersize=3.
-  Title: "DNS Response Time by Provider"
-  Y-axis: "Avg Response Time (ms)"
+  Call _plot_by_group with key_fn=lambda r: r["dns_provider"].
+  Title: "DNS Response Time by Provider". Y-axis: "Avg Response Time (ms)".
 
 BY DOMAIN VIEW
-  Same as By Provider but keyed on domain name.
-  Title: "DNS Response Time by Domain"
-  Y-axis: "Avg Response Time (ms)"
+  Call _plot_by_group with key_fn=lambda r: r["domain"].
+  Title: "DNS Response Time by Domain". Y-axis: "Avg Response Time (ms)".
 
 SUMMARY SCORE VIEW
-  For each time bucket combine all providers and domains:
-    - Track success count and total count (from all records including failures)
-    - Track response times (from successful records only)
-    - Compute score using the Score Formula above
-  Plot a single steelblue line with shaded fill_between (alpha=0.25).
-  Add dashed reference lines: orange at 80 ("Good (80)"), red at 50 ("Poor (50)").
+  Use calculate_score() from utils.py for each bucket.
+  Single steelblue line with fill_between (alpha=0.25).
+  Reference lines: orange dashed at 80, red dashed at 50.
   Title: "Summary Score  (50 % success rate + 50 % response time)"
-  Y-axis: "Score (0 – 100)", ylim (0, 105) for visual headroom above 100.
-
-Refresh the graph after every completed poll and whenever the user changes the
-view, time range, or ISP filter. Show a "No data available" placeholder when
-there are no results for the selected range.
+  Y-axis: "Score (0 – 100)", ylim (0, 105).
 
 ---
 
 SETUP DIALOG (gui/setup_dialog.py)
 
-Modal Toplevel, 520×460, not resizable. Four-tab Notebook:
+Modal Toplevel, 520×460, not resizable. Four-tab Notebook.
+
+SAVE BUTTON VALIDATION:
+  The Save button (_save_btn) must be disabled in real time whenever
+  dns_providers or domains is empty. Call _update_save_btn() from _prov_refresh()
+  and _dom_refresh() so the button state tracks every Add/Remove operation.
+  _update_save_btn(): state = NORMAL if both lists non-empty, else DISABLED.
 
 Tab 1 — DNS Providers
-  Listbox showing "Name  (server_ip)" for each provider, with vertical scrollbar.
-  Clicking a row copies it into the Name / Server IP entry fields below.
-  Buttons: Add (appends new entry), Update (overwrites selected entry), Remove.
+  Listbox showing "Name  (server_ip)". Clicking a row populates edit fields.
+  Buttons: Add, Update, Remove.
 
 Tab 2 — Domains
-  Listbox of domain names. Entry field with Add (on button click or Enter key)
-  and Remove buttons. Normalise domains to lowercase; silently ignore duplicates.
+  Listbox of domain names. Entry + Add (button or Enter key) + Remove.
+  Normalise to lowercase; silently ignore duplicates.
 
 Tab 3 — Settings
   Spinbox for polling interval (10–3600 seconds).
 
 Tab 4 — Event Log
-  Checkboxes (top to bottom); indented sub-checkboxes are disabled when their
-  parent is unchecked:
+  Checkboxes (top to bottom); indented sub-checkboxes disabled when parent unchecked:
+  1. "Log DNS responses to event window" (log_dns, default checked)
+     1a. "Only log incomplete DNS responses" (log_only_incomplete_dns, indented)
+  2. "Log IP successful detection messages" (log_ip_success)
+  3. "Log ISP changes to event window" (log_isp_changes)
+  4. "Log score to event window" (log_score)
+     4a. "Only log scores below 80" (log_score_below_80_only, indented)
+  5. "Save Event Log" (save_event_log)
 
-  1. "Log DNS responses to event window" (default: checked)
-     Controls config key log_dns.
-     Checked:   DNS poll summary lines are written to the Event Log.
-     Unchecked: all DNS poll messages are suppressed.
-
-     1a. "Only log incomplete DNS responses" (sub, indented, default: checked)
-         Controls config key log_only_incomplete_dns.
-         Checked:   the DNS summary line is suppressed when all queries succeed.
-         Unchecked: the DNS summary line is written after every poll.
-
-  2. "Log IP successful detection messages" (default: checked)
-     Controls config key log_ip_success.
-     Checked:   IP address change and detection messages appear in the Event Log.
-     Unchecked: only IP check failure messages are logged; state tracking (_last_ip,
-                _last_ipv6) and database inserts are unaffected.
-
-  3. "Log ISP changes to event window" (default: checked)
-     Controls config key log_isp_changes.
-     Checked:   when the ISP name changes alongside an IPv4 address change, a
-                dedicated "ISP changed from X to Y" message is written to the
-                Event Log with the "info" tag.
-     Unchecked: ISP transitions are still recorded in the database but no extra
-                event log message is generated. The _last_isp state update is
-                unaffected.
-
-  4. "Log score to event window" (default: checked)
-     Controls config key log_score.
-     Checked:   the summary score (0–100) is written to the Event Log after each poll.
-     Unchecked: no score messages are written.
-
-     4a. "Only log scores below 80" (sub, indented, default: unchecked)
-         Controls config key log_score_below_80_only.
-         Checked:   score messages are suppressed unless the score is below 80.
-         Unchecked: every score is logged.
-
-  5. "Save Event Log" (default: unchecked)
-     Controls config key save_event_log.
-     Checked:   every _log_event message is appended to event.log in APP_DIR.
-     Unchecked: no file is written; the file is deleted on Save if it exists.
-
-Save button validates: interval in range, at least one provider, at least one domain.
-Cancel discards all changes. self.result is None on cancel, updated config dict on save.
-The dialog deep-copies all config keys on open so edits don't affect the live config
-until the user clicks Save. Sub-checkboxes use a command= callback on their parent to
-toggle their tk.DISABLED / tk.NORMAL state immediately when the parent is clicked.
+Save validates: interval in range, Save button already prevents empty lists.
+Cancel discards. self.result is None on cancel, updated config dict on save.
+Deep-copy all config keys on open.
 
 ---
 
-SYSTEM TRAY (optional, requires pystray + Pillow)
+SYSTEM TRAY (gui/_tray_mixin.py, optional)
 
-If pystray/Pillow are not installed, the app still runs; closing just quits instead
+If pystray/Pillow not installed: TRAY_AVAILABLE = False; closing quits instead
 of minimising to tray.
 
-Minimising the window (Unmap event) or clicking the window's X button hides the
-window (root.withdraw()) and creates a tray icon. A 150 ms delay before hiding
-prevents a visual glitch on some platforms.
-
-Tray icon: 64×64 RGBA filled circle with white outline (3 px).
-  Blue  (#2980b9) — not monitoring
-  Green (#27ae60) — monitoring, score > 80 or score not yet available
-  Yellow (#f39c12) — monitoring, score 50–80
-  Red   (#c0392b) — monitoring, score < 50
-
-Tray tooltip: "Internet Uptime Monitor  [Monitoring/Stopped]  Last check: HH:MM:SS"
+Minimising (<Unmap>) or clicking X hides window (root.withdraw()) and creates
+tray icon. 150 ms delay before hiding avoids visual glitch.
 
 Tray menu:
-  Show          (default action, also triggered by double-click)
+  Show          (default action, triggered by double-click)
   ─────
-  Start/Stop Monitoring   (label reflects current state dynamically)
+  Start/Stop Monitoring   (label reflects current state via callable)
   ─────
   Exit
 
-Restoring from tray: stop the pystray icon, call root.deiconify() / lift() /
-focus_force(). All pystray callbacks must marshal to the main thread via
-root.after(0, ...) because pystray runs on its own thread.
+Restoring: icon.stop(), root.deiconify(), root.lift(), root.focus_force().
+All pystray callbacks must marshal to main thread via root.after(0, ...).
+
+---
+
+TESTS (tests/)
+
+conftest.py:
+  autouse fixture tmp_db: monkeypatch APPDATA env var to tmp_path, then reload
+  the database module so APP_DIR and DB_FILE pick up the patched path. Restore
+  after the test by reloading again.
+
+test_utils.py:
+  calculate_score() — perfect score, all failed, zero total, partial, slow
+  responses, clamping, never exceeds 100, returns float.
+
+test_database.py:
+  insert/fetch dns_result (success and failure), since-filter, insert/fetch
+  ip_log, get_latest_ip empty and non-empty, insert ip_failure,
+  get_distinct_isps, purge_old_records.
+
+test_config.py:
+  defaults when missing, reads existing file, back-fills missing keys,
+  corrupt file returns defaults, save/reload roundtrip, schema_version in defaults.
+
+test_ip_tracker.py:
+  _is_valid_ipv4() — valid addresses, invalid text, missing octets, HTML
+  response, address with port, IPv6 address.
+
+test_graph_panel.py:
+  bucket() groups by key, excludes failures; bucket_success() counts correctly.
+  Test the pure bucket logic without instantiating GraphPanel (no display needed).

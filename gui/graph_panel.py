@@ -1,6 +1,8 @@
+import bisect
 import time
 from collections import defaultdict
 from datetime import datetime
+from typing import Callable
 
 import matplotlib
 import matplotlib.dates as mdates
@@ -15,6 +17,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 from database import get_dns_results, get_ip_log, get_distinct_isps
+from utils import calculate_score
 
 # Maps the user-facing dropdown label to how many seconds of history to fetch.
 TIME_RANGES = {
@@ -35,14 +38,14 @@ BUCKET_SECONDS = {
 
 
 class GraphPanel:
-    def __init__(self, parent):
+    def __init__(self, parent: tk.Widget) -> None:
         # Expose self.frame so the caller can pack/grid this widget like any
         # other tkinter container.
         self.frame = ttk.Frame(parent)
         self._build_controls()
         self._build_graph()
 
-    def _build_controls(self):
+    def _build_controls(self) -> None:
         ctrl = ttk.Frame(self.frame)
         ctrl.pack(fill=tk.X, pady=(4, 2))
 
@@ -74,7 +77,9 @@ class GraphPanel:
 
         # Manual refresh button in case the user wants to pull in new data without
         # waiting for the next automatic poll.
-        ttk.Button(ctrl, text="Refresh", command=self.refresh).pack(side=tk.LEFT, padx=8)
+        ttk.Button(ctrl, text="Refresh", command=self.refresh).pack(
+            side=tk.LEFT, padx=8
+        )
 
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
 
@@ -87,7 +92,7 @@ class GraphPanel:
         self._isp_combo.pack(side=tk.LEFT, padx=2)
         self._isp_combo.bind("<<ComboboxSelected>>", lambda _: self.refresh())
 
-    def _build_graph(self):
+    def _build_graph(self) -> None:
         # Create a matplotlib Figure and attach it to a tkinter canvas widget.
         self.fig = Figure(figsize=(9, 4), dpi=100)
         self.ax  = self.fig.add_subplot(111)   # single plot filling the figure
@@ -108,7 +113,7 @@ class GraphPanel:
 
     # ------------------------------------------------------------------
 
-    def _update_isp_options(self):
+    def _update_isp_options(self) -> None:
         isps    = get_distinct_isps()
         options = ["All ISPs"] + isps
         current = self.isp_var.get()
@@ -116,24 +121,25 @@ class GraphPanel:
         if current not in options:
             self.isp_var.set("All ISPs")
 
-    def _filter_by_isp(self, results, isp_name):
+    def _filter_by_isp(self, results: list[dict], isp_name: str) -> list[dict]:
         ip_log = get_ip_log()   # all records, sorted by timestamp ascending
         if not ip_log:
             return results
-        transitions = [(e["timestamp"], e["isp_name"]) for e in ip_log]
+
+        # Build parallel lists for bisect so we can find the active ISP at any
+        # timestamp in O(log N) rather than walking the full list for each result.
+        timestamps  = [e["timestamp"] for e in ip_log]
+        isp_names   = [e["isp_name"]  for e in ip_log]
+
         filtered = []
         for r in results:
-            ts = r["timestamp"]
-            active_isp = None
-            for t, isp in reversed(transitions):
-                if t <= ts:
-                    active_isp = isp
-                    break
+            idx = bisect.bisect_right(timestamps, r["timestamp"]) - 1
+            active_isp = isp_names[idx] if idx >= 0 else None
             if active_isp == isp_name:
                 filtered.append(r)
         return filtered
 
-    def refresh(self):
+    def refresh(self) -> None:
         range_label = self.range_var.get()
         # Calculate the Unix timestamp for the start of the requested window.
         since   = time.time() - TIME_RANGES.get(range_label, 3600)
@@ -150,7 +156,8 @@ class GraphPanel:
         if not results:
             # Show a friendly placeholder instead of a blank white box.
             self.ax.text(
-                0.5, 0.5, "No data available\n\nStart monitoring to collect data.",
+                0.5, 0.5,
+                "No data available\n\nStart monitoring to collect data.",
                 transform=self.ax.transAxes, ha="center", va="center",
                 fontsize=13, color="gray",
             )
@@ -161,9 +168,17 @@ class GraphPanel:
         bucket_s = BUCKET_SECONDS.get(range_label, 60)
 
         if view == "provider":
-            self._plot_by_provider(results, bucket_s)
+            self._plot_by_group(
+                results, bucket_s,
+                key_fn=lambda r: r["dns_provider"],
+                title="DNS Response Time by Provider",
+            )
         elif view == "domain":
-            self._plot_by_domain(results, bucket_s)
+            self._plot_by_group(
+                results, bucket_s,
+                key_fn=lambda r: r["domain"],
+                title="DNS Response Time by Domain",
+            )
         else:
             self._plot_summary(results, bucket_s)
 
@@ -173,14 +188,19 @@ class GraphPanel:
 
     # ------------------------------------------------------------------
 
-    def _bucket(self, results, key_fn, bucket_s):
+    def _bucket(
+        self,
+        results: list[dict],
+        key_fn: Callable[[dict], str],
+        bucket_s: int,
+    ) -> dict:
         """Group successful results into fixed-width time buckets.
 
         Returns {bucket_start_ts: {key: [response_time_ms, ...]}} where the
         key is determined by key_fn(row). Failed results are excluded because
         they have no response time to average.
         """
-        data = defaultdict(lambda: defaultdict(list))
+        data: dict = defaultdict(lambda: defaultdict(list))
         for r in results:
             # Integer-divide the timestamp by bucket_s then multiply back to snap
             # it to the start of the bucket (floor to the nearest bucket boundary).
@@ -189,14 +209,14 @@ class GraphPanel:
                 data[b][key_fn(r)].append(r["response_time_ms"])
         return data
 
-    def _bucket_success(self, results, bucket_s):
+    def _bucket_success(self, results: list[dict], bucket_s: int) -> dict:
         """Group all results (success and failure) into buckets.
 
         Returns {bucket_start_ts: [success_count, total_count]}.
         Used by the summary view which needs to know both the success rate
         *and* the response times.
         """
-        data = defaultdict(lambda: [0, 0])
+        data: dict = defaultdict(lambda: [0, 0])
         for r in results:
             b = int(r["timestamp"] / bucket_s) * bucket_s
             data[b][1] += 1         # increment total
@@ -204,52 +224,37 @@ class GraphPanel:
                 data[b][0] += 1     # increment successes
         return data
 
-    def _plot_by_provider(self, results, bucket_s):
-        # Group by provider name; each provider gets its own line.
-        buckets   = self._bucket(results, lambda r: r["dns_provider"], bucket_s)
-        providers = sorted({r["dns_provider"] for r in results})
+    def _plot_by_group(
+        self,
+        results: list[dict],
+        bucket_s: int,
+        key_fn: Callable[[dict], str],
+        title: str,
+    ) -> None:
+        """Shared implementation for provider and domain response-time plots."""
+        buckets   = self._bucket(results, key_fn, bucket_s)
+        keys      = sorted({key_fn(r) for r in results})
         all_times = sorted(buckets)     # chronological order for left-to-right plotting
 
-        for provider in providers:
+        for key in keys:
             xs, ys = [], []
             for t in all_times:
-                vals = buckets[t].get(provider)
+                vals = buckets[t].get(key)
                 if vals:
                     # Convert the Unix timestamp to a Python datetime so matplotlib
                     # can format the x-axis as human-readable times.
                     xs.append(datetime.fromtimestamp(t))
-                    ys.append(sum(vals) / len(vals))    # average response time for this bucket
+                    ys.append(sum(vals) / len(vals))    # average response time
             if xs:
-                # markersize=3 adds small dots at each data point without overwhelming the line.
-                self.ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.5, label=provider)
+                # markersize=3 adds small dots at each data point.
+                self.ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.5, label=key)
 
-        self.ax.set_title("DNS Response Time by Provider")
-        self.ax.set_ylabel("Avg Response Time (ms)")
-        self.ax.legend()
-        self.ax.grid(True, alpha=0.3)   # faint grid helps read values without cluttering
-
-    def _plot_by_domain(self, results, bucket_s):
-        # Same structure as _plot_by_provider but keyed on domain name instead.
-        buckets = self._bucket(results, lambda r: r["domain"], bucket_s)
-        domains = sorted({r["domain"] for r in results})
-        all_times = sorted(buckets)
-
-        for domain in domains:
-            xs, ys = [], []
-            for t in all_times:
-                vals = buckets[t].get(domain)
-                if vals:
-                    xs.append(datetime.fromtimestamp(t))
-                    ys.append(sum(vals) / len(vals))
-            if xs:
-                self.ax.plot(xs, ys, marker="o", markersize=3, linewidth=1.5, label=domain)
-
-        self.ax.set_title("DNS Response Time by Domain")
+        self.ax.set_title(title)
         self.ax.set_ylabel("Avg Response Time (ms)")
         self.ax.legend()
         self.ax.grid(True, alpha=0.3)
 
-    def _plot_summary(self, results, bucket_s):
+    def _plot_summary(self, results: list[dict], bucket_s: int) -> None:
         # Use a sentinel key "_all" so _bucket() still groups everything into
         # the same dict structure but under a single key instead of per-provider.
         rt_buckets      = self._bucket(results, lambda _: "_all", bucket_s)
@@ -258,21 +263,9 @@ class GraphPanel:
 
         xs, scores = [], []
         for t in all_times:
-            ok, total   = success_buckets[t]
-            success_rate = ok / total if total else 0   # fraction 0.0–1.0
-
-            rt_vals = rt_buckets[t].get("_all", [])
-            if rt_vals:
-                avg_rt = sum(rt_vals) / len(rt_vals)
-                # Linear scale: 20 ms maps to score 1.0 (excellent),
-                # 500 ms maps to score 0.0 (worst), clamped outside that range.
-                rt_score = max(0.0, min(1.0, 1.0 - (avg_rt - 20) / 480))
-            else:
-                # No successful lookups in this bucket — worst possible RT score.
-                rt_score = 0.0
-
-            # Weighted combination: success rate matters more than raw speed.
-            score = min(100.0, (success_rate * 0.5 + rt_score * 0.5) * 100)
+            ok, total  = success_buckets[t]
+            rt_vals    = rt_buckets[t].get("_all", [])
+            score      = calculate_score(ok, total, rt_vals)
             xs.append(datetime.fromtimestamp(t))
             scores.append(score)
 
@@ -281,8 +274,12 @@ class GraphPanel:
             self.ax.fill_between(xs, scores, alpha=0.25, color="steelblue")
             self.ax.plot(xs, scores, color="steelblue", linewidth=2, label="Score")
             # Reference lines give context: above 80 is good, below 50 is poor.
-            self.ax.axhline(80, color="orange", linestyle="--", alpha=0.7, label="Good (80)")
-            self.ax.axhline(50, color="red",    linestyle="--", alpha=0.7, label="Poor (50)")
+            self.ax.axhline(
+                80, color="orange", linestyle="--", alpha=0.7, label="Good (80)"
+            )
+            self.ax.axhline(
+                50, color="red", linestyle="--", alpha=0.7, label="Poor (50)"
+            )
 
         self.ax.set_title("Summary Score  (50 % success rate + 50 % response time)")
         self.ax.set_ylabel("Score (0 – 100)")
@@ -290,7 +287,7 @@ class GraphPanel:
         self.ax.legend()
         self.ax.grid(True, alpha=0.3)
 
-    def _format_xaxis(self, range_label):
+    def _format_xaxis(self, range_label: str) -> None:
         # AutoDateLocator picks sensible tick intervals for the selected time span.
         # ConciseDateFormatter uses the shortest unambiguous label for each tick
         # (e.g. just "14:30" within a single day, "Jun 5" across multiple days).

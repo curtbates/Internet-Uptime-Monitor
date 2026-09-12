@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from pathlib import Path
 import os
 
@@ -11,7 +12,7 @@ APP_DIR.mkdir(parents=True, exist_ok=True)
 DB_FILE = APP_DIR / "uptime_monitor.db"
 
 
-def _connect():
+def _connect() -> sqlite3.Connection:
     # Open a new connection each call. SQLite connections are cheap and this
     # avoids sharing a single connection across threads.
     conn = sqlite3.connect(str(DB_FILE))
@@ -21,7 +22,7 @@ def _connect():
     return conn
 
 
-def initialize_db():
+def initialize_db() -> None:
     # executescript runs multiple statements in one call and wraps them in a
     # transaction automatically. "IF NOT EXISTS" makes this safe to call on
     # every startup without wiping existing data.
@@ -61,26 +62,40 @@ def initialize_db():
             conn.execute("ALTER TABLE ip_log ADD COLUMN public_ipv6 TEXT")
 
 
-def insert_dns_result(timestamp, dns_provider, domain, response_time_ms, success):
+def insert_dns_result(
+    timestamp: float,
+    dns_provider: str,
+    domain: str,
+    response_time_ms: float | None,
+    success: bool,
+) -> None:
     # Use parameterised queries (?) throughout to prevent SQL injection from
     # any user-supplied provider names or domain strings.
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO dns_results (timestamp, dns_provider, domain, response_time_ms, success) "
+            "INSERT INTO dns_results "
+            "(timestamp, dns_provider, domain, response_time_ms, success) "
             "VALUES (?, ?, ?, ?, ?)",
             (timestamp, dns_provider, domain, response_time_ms, int(success)),
         )
 
 
-def insert_ip_log(timestamp, public_ip, isp_name=None, org=None, public_ipv6=None):
+def insert_ip_log(
+    timestamp: float,
+    public_ip: str,
+    isp_name: str | None = None,
+    org: str | None = None,
+    public_ipv6: str | None = None,
+) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO ip_log (timestamp, public_ip, isp_name, org, public_ipv6) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO ip_log (timestamp, public_ip, isp_name, org, public_ipv6) "
+            "VALUES (?, ?, ?, ?, ?)",
             (timestamp, public_ip, isp_name, org, public_ipv6),
         )
 
 
-def get_dns_results(since_timestamp):
+def get_dns_results(since_timestamp: float) -> list[dict]:
     # Fetch all rows newer than the given Unix timestamp, ordered oldest-first
     # so the graph plots left-to-right in chronological order.
     with _connect() as conn:
@@ -93,12 +108,12 @@ def get_dns_results(since_timestamp):
     return [dict(r) for r in rows]
 
 
-def insert_ip_failure(timestamp):
+def insert_ip_failure(timestamp: float) -> None:
     with _connect() as conn:
         conn.execute("INSERT INTO ip_failures (timestamp) VALUES (?)", (timestamp,))
 
 
-def get_ip_failures(since_timestamp=0):
+def get_ip_failures(since_timestamp: float = 0) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM ip_failures WHERE timestamp >= ? ORDER BY timestamp",
@@ -107,7 +122,7 @@ def get_ip_failures(since_timestamp=0):
     return [dict(r) for r in rows]
 
 
-def get_ip_log(since_timestamp=0):
+def get_ip_log(since_timestamp: float = 0) -> list[dict]:
     # Default of 0 means "all records ever" when called without an argument.
     with _connect() as conn:
         rows = conn.execute(
@@ -117,15 +132,16 @@ def get_ip_log(since_timestamp=0):
     return [dict(r) for r in rows]
 
 
-def get_distinct_isps():
+def get_distinct_isps() -> list[str]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT isp_name FROM ip_log WHERE isp_name IS NOT NULL ORDER BY isp_name"
+            "SELECT DISTINCT isp_name FROM ip_log "
+            "WHERE isp_name IS NOT NULL ORDER BY isp_name"
         ).fetchall()
     return [r["isp_name"] for r in rows]
 
 
-def get_latest_ip():
+def get_latest_ip() -> dict | None:
     # Used on startup to pre-populate the status bar before the first live poll
     # completes, so the user sees their last-known IP immediately.
     with _connect() as conn:
@@ -135,8 +151,7 @@ def get_latest_ip():
     return dict(row) if row else None
 
 
-def purge_old_records(max_age_days=10):
-    import time
+def purge_old_records(max_age_days: int = 10) -> None:
     cutoff = time.time() - max_age_days * 86400
     with _connect() as conn:
         conn.execute("DELETE FROM dns_results WHERE timestamp < ?", (cutoff,))

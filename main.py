@@ -29,7 +29,7 @@ def main():
 
     root = tk.Tk()          # create the single top-level tkinter window
     MainWindow(root)        # hand it to our application class; it owns the window
-    root.mainloop()         # block here, running the tkinter event loop until the window closes
+    root.mainloop()     # block here until the window closes
 
 
 if __name__ == "__main__":
